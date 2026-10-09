@@ -15,7 +15,7 @@ const app: Application = express();
 
 app.use(
 	cors({
-		origin: config.frontend_url,
+		origin: config.frontend_url || "*",
 		credentials: true,
 	}),
 );
@@ -27,13 +27,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
+// Route definitions
 app.use("/api/v1/auth", AuthRoutes);
 
-// Basic route
-app.get("/", async (req: Request, res: Response) => {
+// Root Health check endpoint
+app.get("/", (_req: Request, res: Response) => {
 	res.status(httpStatus.OK).json({
 		success: true,
-		message: "Welcome to PH Healthcare System Backend",
+		message: "Welcome to Blood Donation & Emergency Platform Backend API",
+		data: {
+			version: "v1.0.0",
+			status: "active",
+			docs: "Import postman collections from ./postman/ to test each phase",
+		},
 	});
 });
 
