@@ -1,18 +1,45 @@
 model User {
-  id                 String     @id @default(uuid())
-  name               String
-  email              String
-  password           String
-  emailVerified      Boolean    @default(false)
-  role               Role       @default(PATIENT)
-  status             UserStatus @default(ACTIVE)
-  needPasswordChange Boolean    @default(false)
-  isDeleted          Boolean    @default(false)
-  deletedAt          DateTime?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
-  patient            Patient?
+  id            String        @id @default(uuid())
+  name          String
+  email         String        @unique
+  password      String?
+  role          Role          @default(RECIPIENT)
+  status        UserStatus    @default(ACTIVE)
+  googleId      String?       @unique
+  phone         String?
+  address       String?
+  isDeleted     Boolean       @default(false)
+  deletedAt     DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  @@unique([email])
+  donorProfile  DonorProfile?
+  bloodRequests BloodRequest[]
+  assignments   DonationAssignment[]
+  payments      Payment[]
+  auditLogs     AuditLog[]
+
+  @@index([email, role, status])
+  @@index([isDeleted])
   @@map("users")
+}
+
+model DonorProfile {
+  id               String       @id @default(uuid())
+  userId           String       @unique
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bloodGroup       BloodGroup?
+  isAvailable      Boolean      @default(true)
+  lastDonationDate DateTime?
+  totalDonations   Int          @default(0)
+  phone            String?
+  address          String?
+  latitude         Float?
+  longitude        Float?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([bloodGroup, isAvailable])
+  @@index([lastDonationDate])
+  @@map("donor_profiles")
 }

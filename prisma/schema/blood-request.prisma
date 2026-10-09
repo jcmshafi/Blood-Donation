@@ -1,0 +1,46 @@
+model BloodRequest {
+  id              String               @id @default(uuid())
+  requesterId     String
+  requester       User                 @relation(fields: [requesterId], references: [id], onDelete: Restrict)
+  patientName     String
+  bloodGroup      BloodGroup
+  unitsNeeded     Int                  @default(1)
+  unitsFulfilled  Int                  @default(0)
+  hospitalName    String
+  hospitalAddress String
+  latitude        Float
+  longitude       Float
+  contactNumber   String
+  urgency         UrgencyLevel         @default(NORMAL)
+  status          RequestStatus        @default(OPEN)
+  notes           String?
+  isDeleted       Boolean              @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  assignments     DonationAssignment[]
+  payments        Payment[]
+
+  @@index([bloodGroup, urgency, status])
+  @@index([isDeleted, deletedAt])
+  @@index([createdAt])
+  @@map("blood_requests")
+}
+
+model DonationAssignment {
+  id          String         @id @default(uuid())
+  requestId   String
+  request     BloodRequest   @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  donorId     String
+  donor       User           @relation(fields: [donorId], references: [id], onDelete: Restrict)
+  status      DonationStatus @default(ASSIGNED)
+  notes       String?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([requestId, donorId])
+  @@index([status])
+  @@map("donation_assignments")
+}
