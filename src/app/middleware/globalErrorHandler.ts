@@ -1,65 +1,72 @@
 import type { NextFunction, Request, Response } from "express";
 import httpStatus from "http-status";
+import { ZodError } from "zod";
 import { Prisma } from "../../generated/prisma/client";
-import config from "../config";
+import { AppError } from "../utils/AppError";
+
+type TErrorSource = {
+	field?: string;
+	message: string;
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const globalErrorHandler = async (
+export const globalErrorHandler = (
 	err: any,
 	_req: Request,
 	res: Response,
 	_next: NextFunction,
 ) => {
-	if (config.node_env === "development") {
-		console.log("Error from Global Error Handler", err);
-	}
-
 	let statusCode: number = httpStatus.INTERNAL_SERVER_ERROR;
-	let errorMessage = err.message || "Internal Server Error";
-	const errorName = err.name || "Internal Server Error";
-	// let errorDetails = err.stack
+	let message = "Something went wrong";
+	let errors: TErrorSource[] = [];
 
-	if (err instanceof Prisma.PrismaClientValidationError) {
+	if (err instanceof ZodError) {
 		statusCode = httpStatus.BAD_REQUEST;
-		errorMessage = "You have provided incorrect field type or missing fields";
+		message = "Validation Error";
+		errors = err.issues.map((issue) => ({
+			field: issue.path.length > 0 ? issue.path.join(".") : undefined,
+			message: issue.message,
+		}));
+	} else if (err instanceof AppError) {
+		statusCode = err.statusCode;
+		message = err.message;
+		errors = [{ message: err.message }];
+	} else if (err instanceof Prisma.PrismaClientValidationError) {
+		statusCode = httpStatus.BAD_REQUEST;
+		message = "Prisma validation error: Invalid field types or missing fields";
+		errors = [{ message: err.message }];
 	} else if (err instanceof Prisma.PrismaClientKnownRequestError) {
 		if (err.code === "P2002") {
-			(statusCode = httpStatus.BAD_REQUEST),
-				(errorMessage = "Duplicate Key Error");
-		} else if (err.code === "P2003") {
-			(statusCode = httpStatus.BAD_REQUEST),
-				(errorMessage = "Foreign key constraint failed");
+			statusCode = httpStatus.CONFLICT;
+			message = "Duplicate key error: A record with this value already exists";
+			errors = [
+				{
+					field: (err.meta?.target as string[])?.join(".") || "field",
+					message: "Must be unique",
+				},
+			];
 		} else if (err.code === "P2025") {
-			(statusCode = httpStatus.BAD_REQUEST),
-				(errorMessage =
-					"An operation failed because it depends on one or more records that were required but not found.");
-		}
-	} else if (err instanceof Prisma.PrismaClientInitializationError) {
-		if (err.errorCode === "P1000") {
-			statusCode = httpStatus.UNAUTHORIZED;
-			errorMessage =
-				"Authentication failed against database server. Please Check Your Credentials";
-		} else if (err.errorCode === "P1001") {
+			statusCode = httpStatus.NOT_FOUND;
+			message = "Requested record not found";
+			errors = [{ message: "Record not found" }];
+		} else if (err.code === "P2003") {
 			statusCode = httpStatus.BAD_REQUEST;
-			errorMessage = "Can't reach database server";
+			message = "Foreign key constraint failure";
+			errors = [{ message: "Foreign key reference failed" }];
+		} else {
+			statusCode = httpStatus.BAD_REQUEST;
+			message = err.message || "Database query error";
+			errors = [{ message: err.message }];
 		}
-	} else if (err instanceof Prisma.PrismaClientUnknownRequestError) {
-		statusCode = httpStatus.INTERNAL_SERVER_ERROR;
-		errorMessage = "Error occurred during query execution";
 	} else if (err instanceof Error) {
-		errorMessage = err.message;
+		statusCode = httpStatus.BAD_REQUEST;
+		message = err.message || "Something went wrong";
+		errors = [{ message: err.message }];
 	}
 
-	res.status(httpStatus.INTERNAL_SERVER_ERROR).json({
+	res.status(statusCode).json({
 		success: false,
-		statusCode: statusCode || httpStatus.INTERNAL_SERVER_ERROR,
-		name:
-			config.node_env === "development" ? errorName : "Internal Server Error",
-		message:
-			config.node_env === "development"
-				? errorMessage
-				: "Internal Server Error",
-		error: config.node_env === "development" ? err : undefined,
-		stack: config.node_env === "development" ? err.stack : undefined,
+		message,
+		errors,
 	});
 };
