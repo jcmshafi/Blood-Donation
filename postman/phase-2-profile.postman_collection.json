@@ -1,0 +1,277 @@
+{
+	"info": {
+		"_postman_id": "c2d3e4f5-a6b7-48c9-0d1e-2f3a4b5c6d7e",
+		"name": "Phase 2 - User & Donor Profile Management",
+		"description": "Blood Donation & Emergency Platform Backend API - Phase 2 Endpoints.\nIncludes: Get Current Profile (/users/me), Update User Profile (/users/me), and Manage Donor Profile (/users/donor-profile).\nAlso includes RBAC testing (rejection of non-donor role on donor profile endpoint).",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "0. Login as Donor (Setup Token)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"if (res.data && res.data.accessToken) {",
+							"    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+							"    pm.collectionVariables.set(\"donorAccessToken\", res.data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"donor@bloodemergency.org\",\n  \"password\": \"Donor@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/auth/login",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "auth", "login"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "1. Login as Recipient (Setup Recipient Token)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"if (res.data && res.data.accessToken) {",
+							"    pm.collectionVariables.set(\"recipientAccessToken\", res.data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"recipient@bloodemergency.org\",\n  \"password\": \"Recipient@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/auth/login",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "auth", "login"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "2. Get Current User Profile (GET /api/v1/users/me)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"User profile returned with success\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.id).to.be.a('string');",
+							"    pm.expect(res.data.email).to.be.a('string');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/users/me",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "users", "me"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "3. Update User Profile (PATCH /api/v1/users/me)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Profile fields updated\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.name).to.eql(\"Demo Donor Rahim (Updated)\");",
+							"    pm.expect(res.data.address).to.eql(\"Banani, Dhaka\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Demo Donor Rahim (Updated)\",\n  \"phone\": \"+8801700998877\",\n  \"address\": \"Banani, Dhaka\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/users/me",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "users", "me"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "4. Update Donor Profile (PATCH /api/v1/users/donor-profile)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Donor profile fields updated\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.bloodGroup).to.eql(\"O_POSITIVE\");",
+							"    pm.expect(res.data.isAvailable).to.eql(true);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"bloodGroup\": \"O_POSITIVE\",\n  \"isAvailable\": true,\n  \"lastDonationDate\": \"2026-06-15\",\n  \"phone\": \"+8801700998877\",\n  \"address\": \"Banani, Dhaka\",\n  \"latitude\": 23.7937,\n  \"longitude\": 90.4066\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/users/donor-profile",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "users", "donor-profile"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "5. Forbidden Check (Recipient Cannot Update Donor Profile)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 403 Forbidden\", function () {",
+							"    pm.response.to.have.status(403);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Forbidden error message returned\", function () {",
+							"    pm.expect(res.success).to.eql(false);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{recipientAccessToken}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"isAvailable\": false\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/users/donor-profile",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "users", "donor-profile"]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5000"
+		},
+		{
+			"key": "accessToken",
+			"value": ""
+		},
+		{
+			"key": "donorAccessToken",
+			"value": ""
+		},
+		{
+			"key": "recipientAccessToken",
+			"value": ""
+		}
+	]
+}
