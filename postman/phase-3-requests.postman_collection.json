@@ -1,0 +1,334 @@
+{
+	"info": {
+		"_postman_id": "d3e4f5a6-b7c8-49d0-1e2f-3a4b5c6d7e8f",
+		"name": "Phase 3 - Emergency Blood Request Lifecycle & Advanced Filtering",
+		"description": "Blood Donation & Emergency Platform Backend API - Phase 3 Endpoints.\nIncludes: Create Blood Request, List Blood Requests (Pagination, Filters, Search, Sorting), Get Request Details, Update Request, Soft Delete Request, and Verification that soft-deleted items are excluded.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "0. Login as Recipient (Setup Token)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"if (res.data && res.data.accessToken) {",
+							"    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+							"    pm.collectionVariables.set(\"recipientAccessToken\", res.data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"recipient@bloodemergency.org\",\n  \"password\": \"Recipient@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/auth/login",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "auth", "login"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "1. Create Emergency Blood Request",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 201 Created\", function () {",
+							"    pm.response.to.have.status(201);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Blood request created successfully\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.id).to.be.a('string');",
+							"    pm.expect(res.data.bloodGroup).to.eql('B_POSITIVE');",
+							"    pm.expect(res.data.status).to.eql('OPEN');",
+							"});",
+							"if (res.data && res.data.id) {",
+							"    pm.collectionVariables.set(\"requestId\", res.data.id);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"patientName\": \"Farzana Yasmin\",\n  \"bloodGroup\": \"B_POSITIVE\",\n  \"unitsNeeded\": 2,\n  \"hospitalName\": \"Dhaka Medical College Hospital\",\n  \"hospitalAddress\": \"Secretariat Rd, Bakshibazar, Dhaka\",\n  \"latitude\": 23.7259,\n  \"longitude\": 90.3976,\n  \"contactNumber\": \"+8801712345678\",\n  \"urgency\": \"CRITICAL\",\n  \"notes\": \"Emergency surgery scheduled in 2 hours\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "2. Get All Blood Requests (Pagination, Filters & Sorting)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Pagination meta and results exist\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.meta.page).to.eql(1);",
+							"    pm.expect(res.data.result).to.be.an('array');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests?page=1&limit=10&bloodGroup=B_POSITIVE&urgency=CRITICAL&sortBy=createdAt&sortOrder=desc",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests"],
+					"query": [
+						{ "key": "page", "value": "1" },
+						{ "key": "limit", "value": "10" },
+						{ "key": "bloodGroup", "value": "B_POSITIVE" },
+						{ "key": "urgency", "value": "CRITICAL" },
+						{ "key": "sortBy", "value": "createdAt" },
+						{ "key": "sortOrder", "value": "desc" }
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "3. Search Blood Requests (Keyword Search)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Search results returned\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.result).to.be.an('array');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests?searchTerm=Dhaka Medical",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests"],
+					"query": [
+						{ "key": "searchTerm", "value": "Dhaka Medical" }
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "4. Get Single Blood Request by ID",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Single blood request returned\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.id).to.eql(pm.collectionVariables.get(\"requestId\"));",
+							"    pm.expect(res.data.requester).to.be.an('object');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests", "{{requestId}}"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "5. Update Blood Request Details",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Fields updated properly\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.data.unitsNeeded).to.eql(3);",
+							"    pm.expect(res.data.notes).to.eql('Updated: Patient shifted to ICU');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"unitsNeeded\": 3,\n  \"notes\": \"Updated: Patient shifted to ICU\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests", "{{requestId}}"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "6. Soft Delete Blood Request",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Soft delete success\", function () {",
+							"    pm.expect(res.success).to.eql(true);",
+							"    pm.expect(res.message).to.eql('Blood request deleted successfully');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "Authorization",
+						"value": "Bearer {{accessToken}}"
+					}
+				],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests", "{{requestId}}"]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "7. Verify Soft Deleted Request is Excluded (404 Check)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 404 Not Found\", function () {",
+							"    pm.response.to.have.status(404);",
+							"});",
+							"var res = pm.response.json();",
+							"pm.test(\"Error response returned\", function () {",
+							"    pm.expect(res.success).to.eql(false);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+					"host": ["{{baseUrl}}"],
+					"path": ["api", "v1", "blood-requests", "{{requestId}}"]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5000"
+		},
+		{
+			"key": "accessToken",
+			"value": ""
+		},
+		{
+			"key": "recipientAccessToken",
+			"value": ""
+		},
+		{
+			"key": "requestId",
+			"value": ""
+		}
+	]
+}
