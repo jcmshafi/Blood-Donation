@@ -1,0 +1,1089 @@
+{
+  "info": {
+    "_postman_id": "blood-donation-unified-collection-2026",
+    "name": "Blood Donation & Emergency Platform - Unified API Collection",
+    "description": "Official Single Unified Postman Collection for Blood Donation & Emergency Assistance Platform Backend.\nAll phases are organized into dedicated folders with automated bearer token assignment and environment variable chaining.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Phase 1 - Auth & Role-Based Access Control (RBAC)",
+      "description": "Endpoints 1-5: User registration (Donor/Recipient), Login, GCP Google OAuth Social Login, Refresh Token, Logout.",
+      "item": [
+        {
+          "name": "0. Health Check & Welcome",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "1. Register as DONOR",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201 Created\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Response has success format\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "});",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"refreshToken\", res.data.refreshToken);",
+                  "    pm.collectionVariables.set(\"donorUserId\", res.data.user.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tanvir Hasan (Donor)\",\n  \"email\": \"tanvir.donor@example.com\",\n  \"password\": \"Password@123\",\n  \"role\": \"DONOR\",\n  \"phone\": \"+8801712345678\",\n  \"address\": \"Mirpur 10, Dhaka\",\n  \"bloodGroup\": \"O_POSITIVE\",\n  \"latitude\": 23.8071,\n  \"longitude\": 90.3686\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Register as RECIPIENT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201 Created\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Response has success format\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "});",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"recipientAccessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"recipientUserId\", res.data.user.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nafis Fuad (Recipient)\",\n  \"email\": \"nafis.recipient@example.com\",\n  \"password\": \"Password@123\",\n  \"role\": \"RECIPIENT\",\n  \"phone\": \"+8801812345678\",\n  \"address\": \"Dhanmondi, Dhaka\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Login as Admin (Pre-seeded Demo Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Admin role received\", function () {",
+                  "    pm.expect(res.data.user.role).to.eql(\"ADMIN\");",
+                  "});",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"adminAccessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@bloodemergency.org\",\n  \"password\": \"Admin@123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Login as Donor (Pre-seeded Demo Donor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"donorAccessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"donor@bloodemergency.org\",\n  \"password\": \"Donor@123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. GCP Google Social Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"googleUserToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"demo_google_token_hospital.coordinator@gmail.com\",\n  \"role\": \"RECIPIENT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/google-login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "google-login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh-token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh-token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Phase 2 - User & Donor Profile Management",
+      "description": "Endpoints 6-8: Get Profile (/users/me), Update Profile (/users/me), Update Donor Profile (/users/donor-profile), RBAC check.",
+      "item": [
+        {
+          "name": "0. Login as Donor (Setup Token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"donorAccessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"donor@bloodemergency.org\",\n  \"password\": \"Donor@123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "1. Login as Recipient (Setup Recipient Token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"recipientAccessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"recipient@bloodemergency.org\",\n  \"password\": \"Recipient@123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Current User Profile (GET /api/v1/users/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"User profile returned with success\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.be.a('string');",
+                  "    pm.expect(res.data.email).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Update User Profile (PATCH /api/v1/users/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Profile fields updated\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.name).to.eql(\"Demo Donor Rahim (Updated)\");",
+                  "    pm.expect(res.data.address).to.eql(\"Banani, Dhaka\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo Donor Rahim (Updated)\",\n  \"phone\": \"+8801700998877\",\n  \"address\": \"Banani, Dhaka\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Update Donor Profile (PATCH /api/v1/users/donor-profile)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Donor profile fields updated\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.bloodGroup).to.eql(\"O_POSITIVE\");",
+                  "    pm.expect(res.data.isAvailable).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodGroup\": \"O_POSITIVE\",\n  \"isAvailable\": true,\n  \"lastDonationDate\": \"2026-06-15\",\n  \"phone\": \"+8801700998877\",\n  \"address\": \"Banani, Dhaka\",\n  \"latitude\": 23.7937,\n  \"longitude\": 90.4066\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/donor-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "donor-profile"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Forbidden Check (Recipient Cannot Update Donor Profile)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 403 Forbidden\", function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Forbidden error message returned\", function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isAvailable\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/donor-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "donor-profile"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Phase 3 - Emergency Blood Request Lifecycle & Advanced Filtering",
+      "description": "Endpoints 9-13: Create Blood Request, Filtered & Paginated List, Search, Get by ID, Update, Soft Delete, 404 Check.",
+      "item": [
+        {
+          "name": "0. Login as Recipient (Setup Token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "if (res.data && res.data.accessToken) {",
+                  "    pm.collectionVariables.set(\"accessToken\", res.data.accessToken);",
+                  "    pm.collectionVariables.set(\"recipientAccessToken\", res.data.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"recipient@bloodemergency.org\",\n  \"password\": \"Recipient@123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "1. Create Emergency Blood Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201 Created\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Blood request created successfully\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.be.a('string');",
+                  "    pm.expect(res.data.bloodGroup).to.eql('B_POSITIVE');",
+                  "    pm.expect(res.data.status).to.eql('OPEN');",
+                  "});",
+                  "if (res.data && res.data.id) {",
+                  "    pm.collectionVariables.set(\"requestId\", res.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientName\": \"Farzana Yasmin\",\n  \"bloodGroup\": \"B_POSITIVE\",\n  \"unitsNeeded\": 2,\n  \"hospitalName\": \"Dhaka Medical College Hospital\",\n  \"hospitalAddress\": \"Secretariat Rd, Bakshibazar, Dhaka\",\n  \"latitude\": 23.7259,\n  \"longitude\": 90.3976,\n  \"contactNumber\": \"+8801712345678\",\n  \"urgency\": \"CRITICAL\",\n  \"notes\": \"Emergency surgery scheduled in 2 hours\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get All Blood Requests (Pagination, Filters & Sorting)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Pagination meta and results exist\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.meta.page).to.eql(1);",
+                  "    pm.expect(res.data.result).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests?page=1&limit=10&bloodGroup=B_POSITIVE&urgency=CRITICAL&sortBy=createdAt&sortOrder=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "bloodGroup",
+                  "value": "B_POSITIVE"
+                },
+                {
+                  "key": "urgency",
+                  "value": "CRITICAL"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "createdAt"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "desc"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Search Blood Requests (Keyword Search)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Search results returned\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.result).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests?searchTerm=Dhaka Medical",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests"
+              ],
+              "query": [
+                {
+                  "key": "searchTerm",
+                  "value": "Dhaka Medical"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get Single Blood Request by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Single blood request returned\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get(\"requestId\"));",
+                  "    pm.expect(res.data.requester).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Update Blood Request Details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Fields updated properly\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.unitsNeeded).to.eql(3);",
+                  "    pm.expect(res.data.notes).to.eql('Updated: Patient shifted to ICU');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"unitsNeeded\": 3,\n  \"notes\": \"Updated: Patient shifted to ICU\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Soft Delete Blood Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Soft delete success\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.message).to.eql('Blood request deleted successfully');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Verify Soft Deleted Request is Excluded (404 Check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 404 Not Found\", function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Error response returned\", function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    },
+    {
+      "key": "adminAccessToken",
+      "value": ""
+    },
+    {
+      "key": "donorAccessToken",
+      "value": ""
+    },
+    {
+      "key": "recipientAccessToken",
+      "value": ""
+    },
+    {
+      "key": "donorUserId",
+      "value": ""
+    },
+    {
+      "key": "recipientUserId",
+      "value": ""
+    },
+    {
+      "key": "googleUserToken",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    },
+    {
+      "key": "donationId",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    }
+  ]
+}
