@@ -1034,6 +1034,326 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Phase 4 - Intelligent Matching, Concurrency & Donation Workflow",
+      "description": "Endpoints 14-17: Blood compatibility lookup, Haversine proximity matching, Concurrency-safe donor acceptance transaction (PostgreSQL ACID row-locking), Donation status lifecycle (COMPLETED/CANCELLED), 90-day medical cooldown tracking, and personal donation history.",
+      "item": [
+        {
+          "name": "14. Find Matching Donors (Proximity & ABO Compatibility)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Response contains compatible blood groups and donor list', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.compatibleBloodGroups).to.be.an('array');",
+                  "    pm.expect(res.data.donors).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/matching-donors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "matching-donors"
+              ]
+            },
+            "description": "Discovers all active, eligible donors compatible with the request blood group (ABO/Rh matrix) who passed the 90-day medical cooldown, sorted by proximity in kilometers."
+          },
+          "response": []
+        },
+        {
+          "name": "14b. Find Matching Donors with Distance Filter (10 km)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Filtered donors within proximity', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    if (res.data.donors.length > 0) {",
+                  "        pm.expect(res.data.donors[0].distanceKm).to.be.at.most(10);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/matching-donors?maxDistanceKm=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "matching-donors"
+              ],
+              "query": [
+                {
+                  "key": "maxDistanceKm",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Filters matching donors strictly within the specified radius in kilometers from the hospital coordinates."
+          },
+          "response": []
+        },
+        {
+          "name": "15. Accept Blood Request (Concurrency Lock Transaction)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Assignment created and donationId stored', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.status).to.eql('ASSIGNED');",
+                  "    pm.collectionVariables.set('donationId', res.data.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"I can reach Dhaka Medical College Hospital within 30 minutes.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "accept"
+              ]
+            },
+            "description": "Authenticated donor accepts an open emergency blood request. Uses a PostgreSQL ACID transaction with state-locking to prevent duplicate or over-fulfilled donor allocations."
+          },
+          "response": []
+        },
+        {
+          "name": "15b. Accept Blood Request (Simulated Race Condition - Conflict 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 409 Conflict on fulfilled request', function () {",
+                  "    pm.response.to.have.status(409);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Error returned cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Simulating concurrent donor acceptance after request is fulfilled\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "accept"
+              ]
+            },
+            "description": "Validates that attempts to accept an already fulfilled request or duplicate acceptance correctly rejects with 409 Conflict."
+          },
+          "response": []
+        },
+        {
+          "name": "16. Update Donation Status (Mark COMPLETED & Start Cooldown)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Donation marked COMPLETED and completedAt populated', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.status).to.eql('COMPLETED');",
+                  "    pm.expect(res.data.completedAt).to.not.be.null;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"COMPLETED\",\n  \"notes\": \"Blood donation completed successfully at hospital blood bank.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/donations/{{donationId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations",
+                "{{donationId}}",
+                "status"
+              ]
+            },
+            "description": "Transitions donation assignment status to COMPLETED. In the same transaction, updates the donor's profile with lastDonationDate = now(), increments totalDonations, and starts the 90-day cooldown by setting isAvailable = false."
+          },
+          "response": []
+        },
+        {
+          "name": "17. Get My Donation History & Cooldown Statistics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Donor history contains summary statistics and donations array', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.summary).to.be.an('object');",
+                  "    pm.expect(res.data.summary.totalCompleted).to.be.at.least(1);",
+                  "    pm.expect(res.data.donations).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/donations/my-history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations",
+                "my-history"
+              ]
+            },
+            "description": "Retrieves personal donation history, completed donation counts, last donation date, next eligible donation date, and medical cooldown remaining days."
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
