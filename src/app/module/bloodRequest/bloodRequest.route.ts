@@ -2,6 +2,8 @@ import { Router } from "express";
 import { Role } from "../../../generated/prisma/enums";
 import { auth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
+import { DonationController } from "../donation/donation.controller";
+import { DonationValidation } from "../donation/donation.validation";
 import { BloodRequestController } from "./bloodRequest.controller";
 import { BloodRequestValidation } from "./bloodRequest.validation";
 
@@ -15,6 +17,20 @@ router.post(
 );
 
 router.get("/", BloodRequestController.getAllBloodRequests);
+
+router.get(
+	"/:id/matching-donors",
+	auth(Role.RECIPIENT, Role.ADMIN),
+	validateRequest(DonationValidation.matchingDonorsQuerySchema),
+	DonationController.getMatchingDonors,
+);
+
+router.post(
+	"/:id/accept",
+	auth(Role.DONOR),
+	validateRequest(DonationValidation.acceptBloodRequestSchema),
+	DonationController.acceptBloodRequest,
+);
 
 router.get("/:id", BloodRequestController.getBloodRequestById);
 
