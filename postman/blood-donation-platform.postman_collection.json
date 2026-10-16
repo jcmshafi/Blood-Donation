@@ -1354,6 +1354,214 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Phase 5 - Real bKash Payments",
+      "description": "Endpoints 18-20: Official bKash Tokenized Checkout API integration. Create payment, bKash callback & payment execution, transaction verification, AuditLog persistence, and payment record lookup with RBAC.",
+      "item": [
+        {
+          "name": "18. Initiate bKash Payment (POST /api/v1/payments/bkash/create)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Payment initiated with bkashURL and paymentId', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.payment.id).to.be.a('string');",
+                  "    pm.expect(res.data.payment.status).to.eql('PENDING');",
+                  "    pm.expect(res.data.bkashURL).to.be.a('string');",
+                  "    pm.collectionVariables.set('paymentId', res.data.payment.id);",
+                  "    pm.collectionVariables.set('bkashPaymentId', res.data.payment.paymentId);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": 1200\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/bkash/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "bkash",
+                "create"
+              ]
+            },
+            "description": "Initiates a bKash Tokenized Checkout payment for emergency blood request logistics/processing. Persists Payment record with status PENDING and records AuditLog entry."
+          },
+          "response": []
+        },
+        {
+          "name": "19. Execute bKash Payment on Callback (POST /api/v1/payments/bkash/callback)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Payment executed and status is COMPLETED with trxID', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.status).to.eql('COMPLETED');",
+                  "    pm.expect(res.data.transactionId).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentID\": \"{{bkashPaymentId}}\",\n  \"status\": \"success\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/bkash/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "bkash",
+                "callback"
+              ]
+            },
+            "description": "Simulates or handles the bKash checkout callback. Executes payment with bKash, records the transaction ID (trxID), updates status to COMPLETED, and logs an audit trail."
+          },
+          "response": []
+        },
+        {
+          "name": "20. Get Payment Details & Status (GET /api/v1/payments/{{paymentId}})",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Payment details retrieved with payer and request info', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "    pm.expect(res.data.status).to.eql('COMPLETED');",
+                  "    pm.expect(res.data.request).to.be.an('object');",
+                  "    pm.expect(res.data.payer).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "Fetches payment details, transaction status, request metadata, and payer information. Enforces RBAC so only the payer or Admin can view."
+          },
+          "response": []
+        },
+        {
+          "name": "20b. Payment Access Control Verification (Donor blocked 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403 Forbidden for unauthorized donor', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Security error returned cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "Verifies strict access control preventing arbitrary donors from viewing other users' private financial transactions."
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -1403,6 +1611,10 @@
     },
     {
       "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "bkashPaymentId",
       "value": ""
     }
   ]
