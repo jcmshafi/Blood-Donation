@@ -14,4 +14,15 @@ export default {
 	jwt_refresh_secret: process.env.JWT_REFRESH_SECRET!,
 	jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN!,
 	jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN!,
+	bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdjh1iu98",
+	bkash_app_secret:
+		process.env.BKASH_APP_SECRET || "2is7hdgahdgahsd872368732hdsf7823",
+	bkash_username: process.env.BKASH_USERNAME || "sandboxTokenizedUser02",
+	bkash_password: process.env.BKASH_PASSWORD || "sandboxTokenizedUser02@12345",
+	bkash_base_url:
+		process.env.BKASH_BASE_URL ||
+		"https://tokenized.sandbox.bka.sh/v1.2.0-beta",
+	bkash_callback_url:
+		process.env.BKASH_CALLBACK_URL ||
+		"http://localhost:5000/api/v1/payments/bkash/callback",
 };
