@@ -7,6 +7,7 @@ import {
 	Role,
 } from "../../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
+import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
 import type {
 	IAcceptBloodRequestPayload,
@@ -79,6 +80,16 @@ const getMatchingDonors = async (
 	requestId: string,
 	query: IMatchingDonorsQuery,
 ): Promise<IMatchingDonorsResponse> => {
+	const cacheKey = `cache:matching-donors:${requestId}:${JSON.stringify(query)}`;
+	const cachedData = await cache.get(cacheKey);
+	if (cachedData) {
+		try {
+			return JSON.parse(cachedData);
+		} catch {
+			// fallback to fresh query if parse fails
+		}
+	}
+
 	const bloodRequest = await prisma.bloodRequest.findUnique({
 		where: { id: requestId, isDeleted: false },
 	});
@@ -184,7 +195,7 @@ const getMatchingDonors = async (
 		return 0;
 	});
 
-	return {
+	const responseData: IMatchingDonorsResponse = {
 		bloodRequest: {
 			id: bloodRequest.id,
 			patientName: bloodRequest.patientName,
@@ -200,6 +211,10 @@ const getMatchingDonors = async (
 		totalMatchingDonors: filteredDonors.length,
 		donors: filteredDonors,
 	};
+
+	await cache.set(cacheKey, JSON.stringify(responseData), 60);
+
+	return responseData;
 };
 
 const acceptBloodRequest = async (
@@ -374,6 +389,13 @@ const acceptBloodRequest = async (
 		});
 	});
 
+	// Invalidate caches upon donor assignment
+	await Promise.all([
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.delByPattern("cache:blood-requests:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
+
 	return assignment;
 };
 
@@ -497,6 +519,13 @@ const updateDonationStatus = async (
 			"Invalid target donation status.",
 		);
 	});
+
+	// Invalidate caches upon donation status transition
+	await Promise.all([
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.delByPattern("cache:blood-requests:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
 
 	return updated;
 };

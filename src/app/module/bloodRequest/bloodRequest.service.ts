@@ -2,6 +2,7 @@ import httpStatus from "http-status";
 import { Prisma } from "../../../generated/prisma/client";
 import { Role, UrgencyLevel } from "../../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
+import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
 import type {
 	ICreateBloodRequestPayload,
@@ -52,10 +53,27 @@ const createBloodRequest = async (
 		},
 	});
 
+	// Invalidate relevant caches
+	await Promise.all([
+		cache.delByPattern("cache:blood-requests:*"),
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
+
 	return result;
 };
 
 const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
+	const cacheKey = `cache:blood-requests:${JSON.stringify(filters)}`;
+	const cachedData = await cache.get(cacheKey);
+	if (cachedData) {
+		try {
+			return JSON.parse(cachedData);
+		} catch {
+			// fallback to fresh query
+		}
+	}
+
 	const {
 		searchTerm,
 		bloodGroup,
@@ -120,7 +138,7 @@ const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
 
 	const totalPages = Math.ceil(total / parsedLimit);
 
-	return {
+	const responseData = {
 		meta: {
 			page: parsedPage,
 			limit: parsedLimit,
@@ -129,6 +147,10 @@ const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
 		},
 		result,
 	};
+
+	await cache.set(cacheKey, JSON.stringify(responseData), 30);
+
+	return responseData;
 };
 
 const getBloodRequestById = async (id: string) => {
@@ -205,6 +227,12 @@ const updateBloodRequest = async (
 		},
 	});
 
+	await Promise.all([
+		cache.delByPattern("cache:blood-requests:*"),
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
+
 	return updated;
 };
 
@@ -245,6 +273,12 @@ const deleteBloodRequest = async (
 			resourceId: id,
 		},
 	});
+
+	await Promise.all([
+		cache.delByPattern("cache:blood-requests:*"),
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
 
 	return softDeleted;
 };

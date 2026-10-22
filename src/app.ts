@@ -5,10 +5,12 @@ import express, {
 	type Request,
 	type Response,
 } from "express";
+import helmet from "helmet";
 import httpStatus from "http-status";
 import config from "./app/config";
 import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 import { notFound } from "./app/middleware/notFound";
+import { globalRateLimiter } from "./app/middleware/rateLimiter";
 import { AdminRoutes } from "./app/module/admin/admin.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { BloodRequestRoutes } from "./app/module/bloodRequest/bloodRequest.route";
@@ -17,6 +19,16 @@ import { PaymentRoutes } from "./app/module/payment/payment.route";
 import { UserRoutes } from "./app/module/user/user.route";
 
 const app: Application = express();
+
+// Security headers with Helmet
+app.use(
+	helmet({
+		crossOriginResourcePolicy: { policy: "cross-origin" },
+	}),
+);
+
+// Global API Rate Limiter (100 requests / 15 minutes)
+app.use(globalRateLimiter);
 
 app.use(
 	cors({

@@ -1,6 +1,7 @@
 import httpStatus from "http-status";
 import { Role } from "../../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
+import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
 import type {
 	IUpdateDonorProfilePayload,
@@ -99,6 +100,12 @@ const updateDonorProfile = async (
 			...updateData,
 		},
 	});
+
+	// Invalidate matching donors and dashboard caches
+	await Promise.all([
+		cache.delByPattern("cache:matching-donors:*"),
+		cache.del("cache:admin:dashboard-stats"),
+	]);
 
 	return updatedDonorProfile;
 };

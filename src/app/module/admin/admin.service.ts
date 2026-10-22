@@ -8,6 +8,7 @@ import {
 	UserStatus,
 } from "../../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
+import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
 import type {
 	IAdminUserFilterOptions,
@@ -140,10 +141,26 @@ const updateUserStatus = async (
 		},
 	});
 
+	// Invalidate dashboard and donor caches
+	await Promise.all([
+		cache.del("cache:admin:dashboard-stats"),
+		cache.delByPattern("cache:matching-donors:*"),
+	]);
+
 	return updatedUser;
 };
 
 const getDashboardStats = async (): Promise<IDashboardStats> => {
+	const cacheKey = "cache:admin:dashboard-stats";
+	const cachedData = await cache.get(cacheKey);
+	if (cachedData) {
+		try {
+			return JSON.parse(cachedData);
+		} catch {
+			// fallback to fresh query
+		}
+	}
+
 	const [
 		totalUsers,
 		totalDonors,
@@ -207,7 +224,7 @@ const getDashboardStats = async (): Promise<IDashboardStats> => {
 		requestsByUrgency[item.urgency] = item._count.id;
 	}
 
-	return {
+	const statsResult: IDashboardStats = {
 		totalUsers,
 		totalDonors,
 		availableDonors,
@@ -220,6 +237,10 @@ const getDashboardStats = async (): Promise<IDashboardStats> => {
 		requestsByBloodGroup,
 		requestsByUrgency,
 	};
+
+	await cache.set(cacheKey, JSON.stringify(statsResult), 30);
+
+	return statsResult;
 };
 
 const getAuditLogs = async (filters: IAuditLogFilterOptions) => {
