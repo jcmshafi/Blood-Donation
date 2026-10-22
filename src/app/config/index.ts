@@ -14,9 +14,10 @@ export default {
 	jwt_refresh_secret: process.env.JWT_REFRESH_SECRET!,
 	jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN!,
 	jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN!,
-	bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdjh1iu98",
+	bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdadl1eqq",
 	bkash_app_secret:
-		process.env.BKASH_APP_SECRET || "2is7hdgahdgahsd872368732hdsf7823",
+		process.env.BKASH_APP_SECRET ||
+		"2is7hdktrekvrbljjh44ll3d9l1dtjo4pasmjvs5vl5qr3fug4b",
 	bkash_username: process.env.BKASH_USERNAME || "sandboxTokenizedUser02",
 	bkash_password: process.env.BKASH_PASSWORD || "sandboxTokenizedUser02@12345",
 	bkash_base_url:
