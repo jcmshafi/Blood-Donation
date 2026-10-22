@@ -36,11 +36,18 @@ const initiateBkashPayment = async (
 
 	const invoiceNumber = `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+	const payer = await prisma.user.findUnique({
+		where: { id: payerId },
+		select: { phone: true },
+	});
+	const cleanPhone = payer?.phone?.replace(/\D/g, "") || "01770618575";
+	const payerReference = cleanPhone.length === 11 ? cleanPhone : "01770618575";
+
 	// Initiate payment through bKash Tokenized Checkout API
 	const bkashResponse = await BkashClient.createPayment({
 		amount: payload.amount,
 		invoiceNumber,
-		payerReference: payerId,
+		payerReference,
 	});
 
 	// Persist payment record with PENDING status
