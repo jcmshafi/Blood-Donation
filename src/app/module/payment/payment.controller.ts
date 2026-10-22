@@ -21,8 +21,13 @@ const initiateBkashPayment = catchAsync(async (req: Request, res: Response) => {
 });
 
 const handleBkashCallback = catchAsync(async (req: Request, res: Response) => {
-	const paymentID = (req.body.paymentID || req.query.paymentID) as string;
-	const status = (req.body.status || req.query.status) as string | undefined;
+	const paymentID =
+		((req.body?.paymentID || req.query.paymentID) as string) || "";
+	const status = (req.body?.status || req.query.status) as string | undefined;
+
+	if (!paymentID) {
+		throw new AppError(httpStatus.BAD_REQUEST, "paymentID query parameter is required");
+	}
 
 	const result = await PaymentService.handleBkashCallback(
 		{ paymentID, status },
