@@ -7,6 +7,7 @@ import {
 } from "../../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
+import { paymentReceiptEmailHtml, sendEmail } from "../../utils/sendEmail";
 import { BkashClient } from "./bkash.client";
 import type {
 	IBkashCallbackPayload,
@@ -214,6 +215,22 @@ const handleBkashCallback = async (
 			ipAddress,
 		},
 	});
+
+	// Dispatch transactional payment receipt email
+	if (completedPayment.payer?.email) {
+		sendEmail({
+			to: completedPayment.payer.email,
+			subject: `bKash Payment Receipt: ${completedPayment.amount} BDT (TrxID: ${completedPayment.transactionId})`,
+			html: paymentReceiptEmailHtml(
+				completedPayment.payer.name,
+				completedPayment.amount,
+				completedPayment.transactionId || "N/A",
+				completedPayment.paymentId,
+			),
+		}).catch((err) =>
+			console.error("Payment receipt email dispatch error:", err),
+		);
+	}
 
 	return completedPayment;
 };

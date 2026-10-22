@@ -26,4 +26,7 @@ export default {
 	bkash_callback_url:
 		process.env.BKASH_CALLBACK_URL ||
 		"http://localhost:5000/api/v1/payments/bkash/callback",
+	google_client_id: process.env.GOOGLE_CLIENT_ID,
+	email_user: process.env.EMAIL_USER,
+	google_app_password: process.env.GOOGLE_APP_PASSWORD,
 };

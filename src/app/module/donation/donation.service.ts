@@ -9,6 +9,7 @@ import {
 import { prisma } from "../../lib/prisma";
 import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
+import { donorAssignedEmailHtml, sendEmail } from "../../utils/sendEmail";
 import type {
 	IAcceptBloodRequestPayload,
 	IMatchingDonorItem,
@@ -395,6 +396,24 @@ const acceptBloodRequest = async (
 		cache.delByPattern("cache:blood-requests:*"),
 		cache.del("cache:admin:dashboard-stats"),
 	]);
+
+	// Transactional Email Notification: Notify Requester that a donor was matched
+	const requester = await prisma.user.findUnique({
+		where: { id: assignment.request.requesterId },
+	});
+	if (requester?.email) {
+		sendEmail({
+			to: requester.email,
+			subject: `Donor Found: ${assignment.donor.name} accepted your blood request`,
+			html: donorAssignedEmailHtml(
+				assignment.donor.name,
+				assignment.request.patientName,
+				assignment.request.bloodGroup,
+				assignment.request.hospitalName,
+				assignment.donor.phone || assignment.request.contactNumber,
+			),
+		}).catch((err) => console.error("Email notification dispatch error:", err));
+	}
 
 	return assignment;
 };
