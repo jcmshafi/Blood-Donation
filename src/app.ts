@@ -9,6 +9,7 @@ import httpStatus from "http-status";
 import config from "./app/config";
 import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 import { notFound } from "./app/middleware/notFound";
+import { AdminRoutes } from "./app/module/admin/admin.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { BloodRequestRoutes } from "./app/module/bloodRequest/bloodRequest.route";
 import { DonationRoutes } from "./app/module/donation/donation.route";
@@ -37,6 +38,7 @@ app.use("/api/v1/users", UserRoutes);
 app.use("/api/v1/blood-requests", BloodRequestRoutes);
 app.use("/api/v1/donations", DonationRoutes);
 app.use("/api/v1/payments", PaymentRoutes);
+app.use("/api/v1/admin", AdminRoutes);
 
 // Root Health check endpoint
 app.get("/", (_req: Request, res: Response) => {

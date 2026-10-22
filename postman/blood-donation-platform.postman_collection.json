@@ -1562,6 +1562,354 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Phase 6 - Admin Moderation & Analytics",
+      "description": "Endpoints 21-24: Administrative governance, user account moderation (ACTIVE/BLOCKED), real-time emergency analytics dashboard, and system-wide audit logging with strict RBAC enforcement.",
+      "item": [
+        {
+          "name": "21. List All Users with Filtering & Pagination (GET /api/v1/admin/users)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Users array and pagination meta returned', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.result).to.be.an('array');",
+                  "    pm.expect(res.data.meta).to.be.an('object');",
+                  "    pm.expect(res.data.meta.page).to.eql(1);",
+                  "    if (res.data.result.length > 0) {",
+                  "        pm.expect(res.data.result[0].password).to.be.undefined;",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Admin fetches paginated list of all users with search, role, and status filtering."
+          },
+          "response": []
+        },
+        {
+          "name": "22. Suspend/Block User Account (PATCH /api/v1/admin/users/:id/status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('User account status updated to BLOCKED', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get('recipientUserId'));",
+                  "    pm.expect(res.data.status).to.eql('BLOCKED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"BLOCKED\",\n  \"reason\": \"Policy violation: False emergency blood request report\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users/{{recipientUserId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users",
+                "{{recipientUserId}}",
+                "status"
+              ]
+            },
+            "description": "Admin suspends or blocks a malicious user account. Triggers audit log entry."
+          },
+          "response": []
+        },
+        {
+          "name": "22b. Restore User Account Status (PATCH /api/v1/admin/users/:id/status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('User account status restored to ACTIVE', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get('recipientUserId'));",
+                  "    pm.expect(res.data.status).to.eql('ACTIVE');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\",\n  \"reason\": \"Account verified and restored after review\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users/{{recipientUserId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users",
+                "{{recipientUserId}}",
+                "status"
+              ]
+            },
+            "description": "Admin restores user account status back to ACTIVE after verification."
+          },
+          "response": []
+        },
+        {
+          "name": "23. Real-Time Platform Analytics Dashboard (GET /api/v1/admin/dashboard-stats)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Platform analytics dashboard statistics returned', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.totalUsers).to.be.a('number');",
+                  "    pm.expect(res.data.totalDonors).to.be.a('number');",
+                  "    pm.expect(res.data.totalBloodRequests).to.be.a('number');",
+                  "    pm.expect(res.data.activeEmergencies).to.be.a('number');",
+                  "    pm.expect(res.data.fulfilledRequests).to.be.a('number');",
+                  "    pm.expect(res.data.totalDonationsCompleted).to.be.a('number');",
+                  "    pm.expect(res.data.totalPaymentsVolume).to.be.a('number');",
+                  "    pm.expect(res.data.requestsByBloodGroup).to.be.an('object');",
+                  "    pm.expect(res.data.requestsByUrgency).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/dashboard-stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "dashboard-stats"
+              ]
+            },
+            "description": "Admin retrieves aggregated system statistics, active emergencies, donation volumes, and blood request breakdowns."
+          },
+          "response": []
+        },
+        {
+          "name": "24. System Audit Logs with Pagination (GET /api/v1/admin/audit-logs)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Audit logs retrieved with user details and pagination', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.result).to.be.an('array');",
+                  "    pm.expect(res.data.meta).to.be.an('object');",
+                  "    if (res.data.result.length > 0) {",
+                  "        pm.expect(res.data.result[0].action).to.be.a('string');",
+                  "        pm.expect(res.data.result[0].resource).to.be.a('string');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/audit-logs?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Admin inspects immutable audit logs capturing moderation actions and payment executions."
+          },
+          "response": []
+        },
+        {
+          "name": "24b. RBAC Forbidden Check for Non-Admin (GET /api/v1/admin/dashboard-stats)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403 Forbidden for non-admin', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Response indicates forbidden error', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "    pm.expect(res.message).to.include('Forbidden');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/dashboard-stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "dashboard-stats"
+              ]
+            },
+            "description": "Security test verifying that non-admin tokens (e.g. DONOR) are strictly rejected with 403 Forbidden."
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
