@@ -2,7 +2,9 @@ node_modules
 .env
 .env.*
 !.env.example
-dist
+dist/*
+!dist/server.js
+!dist/server.js.map
 
 /src/generated
 
