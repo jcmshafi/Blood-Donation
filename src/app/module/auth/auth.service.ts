@@ -3,7 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import httpStatus from "http-status";
 import type { JwtPayload, SignOptions } from "jsonwebtoken";
 import { Role, UserStatus } from "../../../generated/prisma/enums";
-import config from "../../config";
+import config from "../../config/index";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
 import { jwtUtils } from "../../utils/jwt";

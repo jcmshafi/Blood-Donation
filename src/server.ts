@@ -1,5 +1,5 @@
 import app from "./app";
-import config from "./app/config";
+import config from "./app/config/index";
 import { prisma } from "./app/lib/prisma";
 
 const PORT = config.port || 5000;

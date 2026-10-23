@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import httpStatus from "http-status";
-import config from "../../config";
+import config from "../../config/index";
 import { AppError } from "../../utils/AppError";
 import type {
 	IBkashCreatePaymentResponse,
