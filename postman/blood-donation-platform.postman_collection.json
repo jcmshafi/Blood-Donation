@@ -23,7 +23,8 @@
               "path": [
                 ""
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nRoot health check and welcome entrypoint for the Blood Donation & Emergency Assistance Platform API.\n\n**🔒 Access Control & Authentication:**\n`Public (No Authorization header required)`\n\n**✅ Success Response:**\n- `200 OK - Returns API operational status, semantic version, and quick-start links.`\n\n**❌ Potential Error Responses:**\n- `500 Internal Server Error (If database or system is down)`\n\n> **💡 Implementation Note:** Ideal for uptime monitors and load balancer health probes (AWS, Vercel, Docker)."
           },
           "response": []
         },
@@ -74,7 +75,8 @@
                 "auth",
                 "register"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nRegisters a new user with the DONOR role and automatically creates their associated Donor Profile.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `name` | string (min 2 chars, required) |\n| `email` | string (valid email format, unique, required) |\n| `password` | string (min 6 chars, required, hashed via bcryptjs) |\n| `role` | 'DONOR' (enum, required) |\n| `phone` | string (valid mobile format, required) |\n| `address` | string (residential address, required) |\n| `bloodGroup` | 'A_POSITIVE' | 'A_NEGATIVE' | 'B_POSITIVE' | 'B_NEGATIVE' | 'AB_POSITIVE' | 'AB_NEGATIVE' | 'O_POSITIVE' | 'O_NEGATIVE' (required for DONOR) |\n| `latitude` | number (-90 to 90, required for proximity matching) |\n| `longitude` | number (-180 to 180, required for proximity matching) |\n\n**✅ Success Response:**\n- `201 Created - Returns user object, donor profile, accessToken, and sets refreshToken cookie.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error or invalid blood group`\n- `409 Conflict - Email already registered in system`\n- `429 Too Many Requests - Exceeded registration rate limit`\n\n> **💡 Implementation Note:** Test script automatically extracts and stores `accessToken`, `refreshToken`, and `donorUserId` in Postman collection variables."
           },
           "response": []
         },
@@ -124,7 +126,8 @@
                 "auth",
                 "register"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nRegisters a new user with the RECIPIENT role (patients, hospitals, or families seeking emergency blood donations).\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `name` | string (min 2 chars, required) |\n| `email` | string (valid email format, unique, required) |\n| `password` | string (min 6 chars, required) |\n| `role` | 'RECIPIENT' (enum, required) |\n| `phone` | string (required) |\n| `address` | string (required) |\n| `latitude` | number (optional, used as default request location) |\n| `longitude` | number (optional, used as default request location) |\n\n**✅ Success Response:**\n- `201 Created - Returns user object, accessToken, and refreshToken cookie.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error`\n- `409 Conflict - Email already registered`\n- `429 Too Many Requests - Exceeded registration rate limit`\n\n> **💡 Implementation Note:** Test script automatically captures and stores `recipientAccessToken` and `recipientUserId` in Postman collection variables."
           },
           "response": []
         },
@@ -174,7 +177,8 @@
                 "auth",
                 "login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nAuthenticates an Administrator user using email and password credentials.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `email` | string (admin email, required, e.g. admin@emergency.com) |\n| `password` | string (admin password, required, e.g. Admin@123) |\n\n**✅ Success Response:**\n- `200 OK - Returns admin profile details, JWT accessToken, and sets refreshToken HTTP-only cookie.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Missing credentials`\n- `401 Unauthorized - Incorrect password`\n- `403 Forbidden - Account is blocked/suspended by another admin`\n- `404 Not Found - Admin email not registered`\n- `429 Too Many Requests - Brute-force rate limiter triggered`\n\n> **💡 Implementation Note:** Test script stores `adminAccessToken` in collection variables for administrative moderation tests."
           },
           "response": []
         },
@@ -221,7 +225,8 @@
                 "auth",
                 "login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nAuthenticates a registered Donor user to access donor-specific workflows and donation matching.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `email` | string (donor email, required) |\n| `password` | string (donor password, required) |\n\n**✅ Success Response:**\n- `200 OK - Returns user details, donor profile, active donation stats, and JWT accessToken.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized - Invalid credentials`\n- `403 Forbidden - Account suspended/blocked`\n- `404 Not Found - User does not exist`\n\n> **💡 Implementation Note:** Test script stores `donorAccessToken` and `accessToken` in collection variables."
           },
           "response": []
         },
@@ -267,7 +272,8 @@
                 "auth",
                 "google-login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nVerifies Google OAuth2 ID Token via Google Identity Services and creates or logs in the user session.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `idToken` | string (Google JWT ID Token obtained from Google Sign-In SDK, required) |\n\n**✅ Success Response:**\n- `200 OK - Returns user profile, accessToken, and sets refreshToken cookie.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Missing or malformed idToken`\n- `401 Unauthorized - Invalid or expired Google signature / wrong audience`\n- `403 Forbidden - Associated account is suspended`\n\n> **💡 Implementation Note:** Uses google-auth-library to securely verify token signature against Google Public Keys (certs)."
           },
           "response": []
         },
@@ -313,7 +319,8 @@
                 "auth",
                 "refresh-token"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nGenerates a new short-lived JWT Access Token using an active, valid Refresh Token.\n\n**🔒 Access Control & Authentication:**\n`Public (Token provided in body or HTTP-only cookie)`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `refreshToken` | string (valid JWT refresh token, optional if passed via Cookie) |\n\n**✅ Success Response:**\n- `200 OK - Returns a newly signed JWT accessToken valid for the configured TTL (e.g. 1d).`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Refresh token missing`\n- `401 Unauthorized - Refresh token expired or signature invalid`\n- `403 Forbidden - User account blocked since token was issued`\n\n> **💡 Implementation Note:** Test script updates `accessToken` in collection variables with the newly rotated access token."
           },
           "response": []
         },
@@ -346,7 +353,8 @@
                 "auth",
                 "logout"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nTerminates user session by clearing the HTTP-only refreshToken cookie and invalidating credentials.\n\n**🔒 Access Control & Authentication:**\n`Public / Authenticated`\n\n**✅ Success Response:**\n- `200 OK - Clears refreshToken cookie with expired Max-Age.`\n\n**❌ Potential Error Responses:**\n- `500 Internal Server Error - Unexpected server error`\n\n> **💡 Implementation Note:** Ensures secure cleanup across browsers and mobile clients."
           },
           "response": []
         }
@@ -399,7 +407,8 @@
                 "auth",
                 "login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nSetup helper request that logs in as Donor to ensure valid `donorAccessToken` is loaded for Phase 2.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**✅ Success Response:**\n- `200 OK - Sets `donorAccessToken` in collection variables.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`"
           },
           "response": []
         },
@@ -445,7 +454,8 @@
                 "auth",
                 "login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nSetup helper request that logs in as Recipient to ensure valid `recipientAccessToken` is loaded for Phase 2.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**✅ Success Response:**\n- `200 OK - Sets `recipientAccessToken` in collection variables.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`"
           },
           "response": []
         },
@@ -489,7 +499,8 @@
                 "users",
                 "me"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nRetrieves complete profile details of the authenticated caller, including linked Donor attributes if applicable.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Any Authenticated Role: DONOR, RECIPIENT, ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{accessToken}}`\n\n**✅ Success Response:**\n- `200 OK - Returns user object, email, role, phone, address, coordinates, and nested donor profile (with cooldown status).`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized - Missing or invalid Bearer token`\n- `403 Forbidden - User account blocked`\n- `404 Not Found - User record not found`"
           },
           "response": []
         },
@@ -541,7 +552,8 @@
                 "users",
                 "me"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nUpdates personal contact information, residential address, and geolocation coordinates of the authenticated user.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Any Authenticated Role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{accessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `name` | string (optional) |\n| `phone` | string (optional) |\n| `address` | string (optional) |\n| `latitude` | number (-90 to 90, optional, updates proximity baseline) |\n| `longitude` | number (-180 to 180, optional, updates proximity baseline) |\n\n**✅ Success Response:**\n- `200 OK - Returns updated user profile.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error`\n- `401 Unauthorized - Invalid or missing token`"
           },
           "response": []
         },
@@ -593,7 +605,8 @@
                 "users",
                 "donor-profile"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nUpdates donor-specific attributes such as blood group, availability for emergency calls, and medical fitness notes.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `bloodGroup` | 'A_POSITIVE' | 'A_NEGATIVE' | 'B_POSITIVE' | 'B_NEGATIVE' | 'AB_POSITIVE' | 'AB_NEGATIVE' | 'O_POSITIVE' | 'O_NEGATIVE' (optional) |\n| `isAvailable` | boolean (optional, toggle readiness to donate) |\n| `medicalConditions` | string (optional, health or allergy disclosure) |\n\n**✅ Success Response:**\n- `200 OK - Returns updated donor profile details.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid blood group format`\n- `401 Unauthorized - Missing token`\n- `403 Forbidden - Caller does not have DONOR role`"
           },
           "response": []
         },
@@ -643,7 +656,8 @@
                 "users",
                 "donor-profile"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nSecurity verification asserting that a RECIPIENT token cannot access or update the donor profile endpoint.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `isAvailable` | boolean (true) |\n\n**✅ Success Response:**\n- `403 Forbidden - Asserts strict RBAC role authorization check.`\n\n**❌ Potential Error Responses:**\n- `403 Forbidden - Role RECIPIENT is not authorized for donor-profile`\n\n> **💡 Implementation Note:** Verifies checkAuth middleware role restriction."
           },
           "response": []
         }
@@ -696,7 +710,8 @@
                 "auth",
                 "login"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nSetup helper request refreshing the `recipientAccessToken` for blood request creation and management.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**✅ Success Response:**\n- `200 OK`"
           },
           "response": []
         },
@@ -751,7 +766,8 @@
                 "v1",
                 "blood-requests"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nCreates a new urgent blood request for a patient in a designated hospital.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `patientName` | string (required, e.g. Rafiqul Islam) |\n| `hospitalName` | string (required, e.g. Dhaka Medical College Hospital) |\n| `hospitalAddress` | string (required, e.g. Secretariate Rd, Dhaka 1000) |\n| `bloodGroup` | 'A_POSITIVE' | 'A_NEGATIVE' | 'B_POSITIVE' | 'B_NEGATIVE' | 'AB_POSITIVE' | 'AB_NEGATIVE' | 'O_POSITIVE' | 'O_NEGATIVE' (required) |\n| `units` | integer (min 1, max 10, required, units of blood needed) |\n| `urgency` | 'REGULAR' | 'URGENT' | 'CRITICAL' (required) |\n| `neededBy` | ISO-8601 string (e.g. 2026-10-25T14:00:00.000Z, required) |\n| `latitude` | number (hospital GPS latitude, required for proximity matching) |\n| `longitude` | number (hospital GPS longitude, required for proximity matching) |\n| `contactNumber` | string (required, contact number for hospital coordination) |\n| `notes` | string (optional, additional clinical instructions) |\n\n**✅ Success Response:**\n- `201 Created - Returns created blood request record with initial status 'PENDING'.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error (e.g. past neededBy date)`\n- `401 Unauthorized - Missing or invalid token`\n- `403 Forbidden - DONOR role cannot create requests`\n\n> **💡 Implementation Note:** Test script stores `requestId` in Postman collection variables."
           },
           "response": []
         },
@@ -815,7 +831,8 @@
                   "value": "desc"
                 }
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nFetches a paginated list of active blood requests supporting multi-attribute filtering, sorting, and pagination.\n\n**🔒 Access Control & Authentication:**\n`Public (Open for public browsing by donors and relief organizations)`\n\n**🔍 Parameters (Path / Query):**\n- `page`: integer (default 1, optional)\n- `limit`: integer (default 10, optional)\n- `bloodGroup`: 'A_POSITIVE' | ... (optional filter)\n- `urgency`: 'CRITICAL' | 'URGENT' | 'REGULAR' (optional filter)\n- `status`: 'PENDING' | 'ACCEPTED' | 'FULFILLED' | 'CANCELED' (optional)\n- `sortBy`: string (e.g. 'createdAt', 'neededBy', 'urgency', default 'createdAt')\n- `sortOrder`: 'asc' | 'desc' (default 'desc')\n\n**✅ Success Response:**\n- `200 OK - Returns { meta: { page, limit, total, totalPages }, data: [...] }.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid query parameters`\n\n> **💡 Implementation Note:** Automatically excludes records where `isDeleted: true`."
           },
           "response": []
         },
@@ -858,7 +875,8 @@
                   "value": "Dhaka Medical"
                 }
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nExecutes full-text keyword search across patient names, hospital names, and hospital addresses.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**🔍 Parameters (Path / Query):**\n- `searchTerm`: string (keyword query, e.g. 'Dhaka Medical')\n\n**✅ Success Response:**\n- `200 OK - Returns matching blood requests with pagination metadata.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request`"
           },
           "response": []
         },
@@ -897,7 +915,8 @@
                 "blood-requests",
                 "{{requestId}}"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nRetrieves complete details of a specific blood request by its unique UUID.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns complete blood request details including recipient info, donations, and payment logs.`\n\n**❌ Potential Error Responses:**\n- `404 Not Found - Request does not exist or has been soft-deleted`"
           },
           "response": []
         },
@@ -949,7 +968,8 @@
                 "blood-requests",
                 "{{requestId}}"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nModifies fields of an active blood request (e.g. adjusting required units, urgency, or notes).\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Owner RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `hospitalAddress` | string (optional) |\n| `units` | integer (optional) |\n| `urgency` | 'REGULAR' | 'URGENT' | 'CRITICAL' (optional) |\n| `notes` | string (optional) |\n\n**✅ Success Response:**\n- `200 OK - Returns updated blood request record.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error`\n- `401 Unauthorized - Invalid token`\n- `403 Forbidden - Caller is neither the owner nor an ADMIN`\n- `404 Not Found - Blood request not found`"
           },
           "response": []
         },
@@ -992,7 +1012,8 @@
                 "blood-requests",
                 "{{requestId}}"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nSoft deletes an active blood request, marking `isDeleted: true` and transitioning status to `CANCELED`.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Owner RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns soft-deleted blood request confirmation.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Caller does not own the request`\n- `404 Not Found`\n\n> **💡 Implementation Note:** Preserves historical data and payment audit logs while hiding the request from public searches."
           },
           "response": []
         },
@@ -1029,7 +1050,8 @@
                 "blood-requests",
                 "{{requestId}}"
               ]
-            }
+            },
+            "description": "### 📋 Endpoint Overview\nAssurance test verifying that a soft-deleted blood request returns HTTP 404 Not Found upon direct retrieval.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `404 Not Found - Expected security assertion confirming soft-deleted record exclusion.`\n\n**❌ Potential Error Responses:**\n- `404 Not Found`"
           },
           "response": []
         }
@@ -1082,7 +1104,7 @@
                 "matching-donors"
               ]
             },
-            "description": "Discovers all active, eligible donors compatible with the request blood group (ABO/Rh matrix) who passed the 90-day medical cooldown, sorted by proximity in kilometers."
+            "description": "### 📋 Endpoint Overview\nDiscovers active, eligible donors compatible with the blood request based on medical ABO compatibility rules and proximity.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns array of compatible donors with calculated distance (km) ranked closest first.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-owner recipient or unauthorized role`\n- `404 Not Found - Blood request not found`\n\n> **💡 Implementation Note:** Uses Haversine formula on hospital vs donor latitude/longitude. Donors within the 90-day cooldown are automatically excluded."
           },
           "response": []
         },
@@ -1136,7 +1158,7 @@
                 }
               ]
             },
-            "description": "Filters matching donors strictly within the specified radius in kilometers from the hospital coordinates."
+            "description": "### 📋 Endpoint Overview\nDiscovers matching donors filtered strictly within a maximum geographic radius (e.g. 10 km).\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n- `maxDistanceKm`: number (e.g. 10, query parameter)\n\n**✅ Success Response:**\n- `200 OK - Returns compatible donors within 10km radius sorted by proximity.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid distance number`\n- `404 Not Found`"
           },
           "response": []
         },
@@ -1192,7 +1214,7 @@
                 "accept"
               ]
             },
-            "description": "Authenticated donor accepts an open emergency blood request. Uses a PostgreSQL ACID transaction with state-locking to prevent duplicate or over-fulfilled donor allocations."
+            "description": "### 📋 Endpoint Overview\nAuthenticated donor accepts an open emergency blood request, locking the record using a PostgreSQL transaction.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `notes` | string (optional, e.g. 'On my way to Dhaka Medical College') |\n\n**✅ Success Response:**\n- `201 Created - Returns new Donation record with status 'ACCEPTED'.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Incompatible blood group or donor currently in 90-day cooldown`\n- `401 Unauthorized - Missing token`\n- `403 Forbidden - Non-donor role`\n- `404 Not Found - Blood request does not exist`\n- `409 Conflict - Blood request is already fulfilled or accepted by another donor`\n\n> **💡 Implementation Note:** Test script stores `donationId` in collection variables."
           },
           "response": []
         },
@@ -1246,7 +1268,7 @@
                 "accept"
               ]
             },
-            "description": "Validates that attempts to accept an already fulfilled request or duplicate acceptance correctly rejects with 409 Conflict."
+            "description": "### 📋 Endpoint Overview\nValidates concurrency protection by attempting duplicate acceptance on an already accepted blood request.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `409 Conflict - Expected concurrency error response indicating request is already fulfilled.`\n\n**❌ Potential Error Responses:**\n- `409 Conflict - Blood request already accepted or fulfilled`"
           },
           "response": []
         },
@@ -1302,7 +1324,7 @@
                 "status"
               ]
             },
-            "description": "Transitions donation assignment status to COMPLETED. In the same transaction, updates the donor's profile with lastDonationDate = now(), increments totalDonations, and starts the 90-day cooldown by setting isAvailable = false."
+            "description": "### 📋 Endpoint Overview\nTransitions donation status to COMPLETED and atomically initiates the 90-day donor cooldown period.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR, RECIPIENT, or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{donationId}})\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `status` | 'COMPLETED' | 'CANCELED' (required) |\n| `unitsDonated` | integer (min 1, optional, default 1) |\n| `notes` | string (optional, clinical completion notes) |\n\n**✅ Success Response:**\n- `200 OK - Returns completed donation record; updates donor isAvailable to false and sets nextEligibleDate to +90 days.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid status transition`\n- `401 Unauthorized`\n- `404 Not Found - Donation record not found`"
           },
           "response": []
         },
@@ -1349,7 +1371,7 @@
                 "my-history"
               ]
             },
-            "description": "Retrieves personal donation history, completed donation counts, last donation date, next eligible donation date, and medical cooldown remaining days."
+            "description": "### 📋 Endpoint Overview\nRetrieves authenticated donor's personal donation records, total units donated, and real-time cooldown countdown.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n\n**✅ Success Response:**\n- `200 OK - Returns donation history list and summary: { totalDonations, totalUnitsDonated, lastDonationDate, isAvailable, daysUntilEligible, nextEligibleDate }.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Caller does not have DONOR role`"
           },
           "response": []
         }
@@ -1414,7 +1436,7 @@
                 "create"
               ]
             },
-            "description": "Initiates a bKash Tokenized Checkout payment for emergency blood request logistics/processing. Persists Payment record with status PENDING and records AuditLog entry."
+            "description": "### 📋 Endpoint Overview\nInitiates a bKash Tokenized Checkout payment to fund emergency ambulance and blood logistics transport.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `requestId` | string (UUID of associated blood request, required, {{requestId}}) |\n| `amount` | number (positive BDT amount, e.g. 500, required) |\n| `purpose` | string (e.g. 'Emergency ambulance transport fee', required) |\n\n**✅ Success Response:**\n- `201 Created - Returns local payment record, bKash paymentID, and `bkashURL` redirect gateway URL.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid amount or missing requestId`\n- `401 Unauthorized`\n- `404 Not Found - Blood request does not exist`\n- `502 Bad Gateway - bKash gateway connection failure`\n\n> **💡 Implementation Note:** Test script captures `paymentId` and `bkashPaymentId` in collection variables."
           },
           "response": []
         },
@@ -1465,7 +1487,7 @@
                 "callback"
               ]
             },
-            "description": "Simulates or handles the bKash checkout callback. Executes payment with bKash, records the transaction ID (trxID), updates status to COMPLETED, and logs an audit trail."
+            "description": "### 📋 Endpoint Overview\nHandles bKash Tokenized Checkout callback, executes transaction with bKash, and writes an audit log.\n\n**🔒 Access Control & Authentication:**\n`Public / Webhook Callback (bKash Gateway)`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `paymentID` | string (bKash payment ID, {{bkashPaymentId}}, required) |\n| `status` | 'success' | 'failure' | 'cancel' (required) |\n\n**✅ Success Response:**\n- `200 OK - Returns completed payment record with bKash trxID, invoice number, and execution timestamp.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Payment canceled or failed at bKash gateway`\n- `404 Not Found - Local payment transaction record not found`\n- `502 Bad Gateway - bKash verification failed`"
           },
           "response": []
         },
@@ -1513,7 +1535,7 @@
                 "{{paymentId}}"
               ]
             },
-            "description": "Fetches payment details, transaction status, request metadata, and payer information. Enforces RBAC so only the payer or Admin can view."
+            "description": "### 📋 Endpoint Overview\nRetrieves complete transaction details, bKash invoice metadata, and payer information for a payment.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Payer RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{paymentId}})\n\n**✅ Success Response:**\n- `200 OK - Returns payment record with amount, currency (BDT), trxID, status, associated blood request, and payer user details.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Caller did not create this payment and is not an ADMIN`\n- `404 Not Found - Payment record not found`"
           },
           "response": []
         },
@@ -1557,7 +1579,7 @@
                 "{{paymentId}}"
               ]
             },
-            "description": "Verifies strict access control preventing arbitrary donors from viewing other users' private financial transactions."
+            "description": "### 📋 Endpoint Overview\nSecurity verification asserting that non-owner donors are blocked with 403 Forbidden from viewing another user's payment records.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{paymentId}})\n\n**✅ Success Response:**\n- `403 Forbidden - Asserts strict ownership check on financial records.`\n\n**❌ Potential Error Responses:**\n- `403 Forbidden - Access denied`"
           },
           "response": []
         }
@@ -1623,7 +1645,7 @@
                 }
               ]
             },
-            "description": "Admin fetches paginated list of all users with search, role, and status filtering."
+            "description": "### 📋 Endpoint Overview\nAdministrative user directory supporting multi-attribute filtering by role, status, search term, and pagination.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `page`: integer (default 1)\n- `limit`: integer (default 10)\n- `role`: 'DONOR' | 'RECIPIENT' | 'ADMIN' (optional)\n- `status`: 'ACTIVE' | 'BLOCKED' (optional)\n- `searchTerm`: string (searches name, email, phone, optional)\n\n**✅ Success Response:**\n- `200 OK - Returns paginated user records with nested donor profiles and active request counters.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-admin caller`"
           },
           "response": []
         },
@@ -1685,7 +1707,7 @@
                 "status"
               ]
             },
-            "description": "Admin suspends or blocks a malicious user account. Triggers audit log entry."
+            "description": "### 📋 Endpoint Overview\nSuspends or blocks a user account due to guideline violations or fraudulent emergency reports.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{recipientUserId}})\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `status` | 'BLOCKED' (required) |\n| `reason` | string (required, administrative rationale for suspension) |\n\n**✅ Success Response:**\n- `200 OK - Returns updated user status 'BLOCKED' and records an audit log entry.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Validation error or missing reason`\n- `401 Unauthorized`\n- `403 Forbidden - Caller lacks ADMIN role or attempts to block another ADMIN`\n- `404 Not Found - User not found`"
           },
           "response": []
         },
@@ -1747,7 +1769,7 @@
                 "status"
               ]
             },
-            "description": "Admin restores user account status back to ACTIVE after verification."
+            "description": "### 📋 Endpoint Overview\nRestores a suspended user account back to ACTIVE status after identity verification.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n- `Content-Type`: `application/json`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{recipientUserId}})\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `status` | 'ACTIVE' (required) |\n| `reason` | string (required, e.g. 'Identity verified') |\n\n**✅ Success Response:**\n- `200 OK - Returns user status 'ACTIVE' and writes restoration to the audit log.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request`\n- `401 Unauthorized`\n- `403 Forbidden`\n- `404 Not Found`"
           },
           "response": []
         },
@@ -1800,7 +1822,7 @@
                 "dashboard-stats"
               ]
             },
-            "description": "Admin retrieves aggregated system statistics, active emergencies, donation volumes, and blood request breakdowns."
+            "description": "### 📋 Endpoint Overview\nRetrieves aggregated platform metrics: user demographics, active emergencies, donation fulfillment, and financial totals.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n\n**✅ Success Response:**\n- `200 OK - Returns { totalUsers, usersByRole, donorStats: { available, inCooldown }, bloodRequests: { total, pending, fulfilled, byUrgency }, payments: { totalCollected, totalTransactions } }.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-admin access denied`"
           },
           "response": []
         },
@@ -1860,7 +1882,7 @@
                 }
               ]
             },
-            "description": "Admin inspects immutable audit logs capturing moderation actions and payment executions."
+            "description": "### 📋 Endpoint Overview\nRetrieves immutable audit trail capturing administrative moderation, status changes, and payment completions.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `page`: integer (default 1)\n- `limit`: integer (default 10)\n- `action`: string (optional, e.g. 'USER_STATUS_UPDATE', 'PAYMENT_EXECUTED')\n- `startDate`: ISO string (optional)\n- `endDate`: ISO string (optional)\n\n**✅ Success Response:**\n- `200 OK - Returns paginated audit log entries with actor ID, target ID, metadata snapshot, and timestamp.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-admin access denied`"
           },
           "response": []
         },
@@ -1905,7 +1927,7 @@
                 "dashboard-stats"
               ]
             },
-            "description": "Security test verifying that non-admin tokens (e.g. DONOR) are strictly rejected with 403 Forbidden."
+            "description": "### 📋 Endpoint Overview\nSecurity verification asserting that non-admin tokens (e.g. DONOR) are strictly rejected with 403 Forbidden.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n\n**✅ Success Response:**\n- `403 Forbidden - Asserts strict RBAC enforcement on administrative routes.`\n\n**❌ Potential Error Responses:**\n- `403 Forbidden - Forbidden resource`"
           },
           "response": []
         }

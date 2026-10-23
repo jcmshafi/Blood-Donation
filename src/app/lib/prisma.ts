@@ -6,7 +6,7 @@ const connectionString = process.env.DATABASE_URL || "";
 
 declare global {
 	// Prevent multiple instances of Prisma Client in serverless reloads
-	// biome-ignore lint/style/noVar: global declaration requires var
+	// biome-ignore lint: global declaration requires var
 	var __prisma: PrismaClient | undefined;
 }
 
