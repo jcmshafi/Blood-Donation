@@ -2,7 +2,7 @@ import app from "./app";
 import config from "./app/config";
 import { prisma } from "./app/lib/prisma";
 
-const PORT = config.port;
+const PORT = config.port || 5000;
 
 const main = async () => {
 	try {
@@ -18,4 +18,9 @@ const main = async () => {
 	}
 };
 
-main();
+// Only start listening when not running as a Vercel Serverless Function
+if (!process.env.VERCEL) {
+	main();
+}
+
+export default app;

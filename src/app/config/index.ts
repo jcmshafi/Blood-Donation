@@ -10,10 +10,14 @@ export default {
 	bak_url: process.env.APP_URL,
 	frontend_url: process.env.FRONTEND_URL,
 	bcrypt_salt_rounds: process.env.BCRYPT_SALT_ROUNDS,
-	jwt_access_secret: process.env.JWT_ACCESS_SECRET!,
-	jwt_refresh_secret: process.env.JWT_REFRESH_SECRET!,
-	jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN!,
-	jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN!,
+	jwt_access_secret:
+		process.env.JWT_ACCESS_SECRET ||
+		"default_jwt_access_secret_for_emergency_platform",
+	jwt_refresh_secret:
+		process.env.JWT_REFRESH_SECRET ||
+		"default_jwt_refresh_secret_for_emergency_platform",
+	jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
+	jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 	bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdadl1eqq",
 	bkash_app_secret:
 		process.env.BKASH_APP_SECRET ||
