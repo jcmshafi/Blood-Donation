@@ -1,3 +1,4 @@
+import { publicRequestSelect } from "./bloodRequest.public";
 import httpStatus from "http-status";
 import type { Prisma } from "../../../generated/prisma/client";
 import { Role, UrgencyLevel } from "../../../generated/prisma/enums";
@@ -64,7 +65,7 @@ const createBloodRequest = async (
 };
 
 const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
-	const cacheKey = `cache:blood-requests:${JSON.stringify(filters)}`;
+	const cacheKey = `cache:blood-requests:public-v2:${JSON.stringify(filters)}`;
 	const cachedData = await cache.get(cacheKey);
 	if (cachedData) {
 		try {
@@ -123,16 +124,8 @@ const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
 			where,
 			skip,
 			take: parsedLimit,
-			orderBy: {
-				[sortBy]: sortOrder === "asc" ? "asc" : "desc",
-			},
-			include: {
-				requester: {
-					omit: {
-						password: true,
-					},
-				},
-			},
+			orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
+			select: publicRequestSelect,
 		}),
 	]);
 
@@ -156,25 +149,7 @@ const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
 const getBloodRequestById = async (id: string) => {
 	const request = await prisma.bloodRequest.findUnique({
 		where: { id, isDeleted: false },
-		include: {
-			requester: {
-				omit: {
-					password: true,
-				},
-			},
-			assignments: {
-				include: {
-					donor: {
-						omit: {
-							password: true,
-						},
-						include: {
-							donorProfile: true,
-						},
-					},
-				},
-			},
-		},
+		select: publicRequestSelect,
 	});
 
 	if (!request) {

@@ -1,13 +1,8 @@
 import type { Request, Response } from "express";
 import httpStatus from "http-status";
-import type {
-	BloodGroup,
-	RequestStatus,
-	UrgencyLevel,
-} from "../../../generated/prisma/enums";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
-import type { IBloodRequestFilterOptions } from "./bloodRequest.interface";
+import { publicRequestQuerySchema, publicRequestIdSchema } from "./bloodRequest.public";
 import { BloodRequestService } from "./bloodRequest.service";
 
 const createBloodRequest = catchAsync(async (req: Request, res: Response) => {
@@ -26,22 +21,7 @@ const createBloodRequest = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getAllBloodRequests = catchAsync(async (req: Request, res: Response) => {
-	const filters: IBloodRequestFilterOptions = {
-		searchTerm: req.query.searchTerm ? String(req.query.searchTerm) : undefined,
-		bloodGroup: req.query.bloodGroup
-			? (String(req.query.bloodGroup) as BloodGroup)
-			: undefined,
-		urgency: req.query.urgency
-			? (String(req.query.urgency) as UrgencyLevel)
-			: undefined,
-		status: req.query.status
-			? (String(req.query.status) as RequestStatus)
-			: undefined,
-		page: req.query.page ? Number(req.query.page) : 1,
-		limit: req.query.limit ? Number(req.query.limit) : 10,
-		sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-		sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc",
-	};
+	const filters = publicRequestQuerySchema.parse(req.query);
 
 	const result = await BloodRequestService.getAllBloodRequests(filters);
 
@@ -54,7 +34,7 @@ const getAllBloodRequests = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getBloodRequestById = catchAsync(async (req: Request, res: Response) => {
-	const id = req.params.id as string;
+	const id = publicRequestIdSchema.parse(req.params.id);
 	const result = await BloodRequestService.getBloodRequestById(id);
 
 	sendResponse(res, {

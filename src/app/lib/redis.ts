@@ -86,6 +86,10 @@ try {
 }
 
 export const cache = {
+	close(): void {
+		redisInstance?.disconnect();
+		isRedisConnected = false;
+	},
 	async get(key: string): Promise<string | null> {
 		if (redisInstance && isRedisConnected) {
 			try {
