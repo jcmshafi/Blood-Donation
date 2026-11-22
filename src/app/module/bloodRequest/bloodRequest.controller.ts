@@ -8,6 +8,27 @@ import {
 } from "./bloodRequest.public";
 import { BloodRequestService } from "./bloodRequest.service";
 import {
+	getWorkspaceBloodRequest,
+	workspaceRequestQuerySchema,
+} from "./bloodRequest.workspace";
+
+const getWorkspaceRequest = catchAsync(async (req: Request, res: Response) => {
+	res.setHeader("Cache-Control", "private, no-store");
+	const id = publicRequestIdSchema.parse(req.params.id);
+	workspaceRequestQuerySchema.parse(req.query);
+	const result = await getWorkspaceBloodRequest(
+		id,
+		req.user!.userId,
+		req.user!.role,
+	);
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Request workspace retrieved successfully",
+		data: result,
+	});
+});
+import {
 	getOwnedBloodRequests,
 	ownedRequestQuerySchema,
 } from "./bloodRequest.owned";
@@ -100,6 +121,7 @@ const deleteBloodRequest = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const BloodRequestController = {
+	getWorkspaceRequest,
 	getMyBloodRequests,
 	createBloodRequest,
 	getAllBloodRequests,

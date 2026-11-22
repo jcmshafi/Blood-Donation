@@ -38,6 +38,12 @@ router.post(
 	DonationController.acceptBloodRequest,
 );
 
+router.get(
+	"/:id/workspace",
+	auth(Role.RECIPIENT, Role.ADMIN),
+	BloodRequestController.getWorkspaceRequest,
+);
+
 router.get("/:id", BloodRequestController.getBloodRequestById);
 
 router.patch(

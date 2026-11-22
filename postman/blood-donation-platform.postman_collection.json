@@ -832,7 +832,7 @@
                 }
               ]
             },
-            "description": "### 📋 Endpoint Overview\nFetches a paginated list of active blood requests supporting multi-attribute filtering, sorting, and pagination.\n\n**🔒 Access Control & Authentication:**\n`Public (Open for public browsing by donors and relief organizations)`\n\n**🔍 Parameters (Path / Query):**\n- `page`: integer (default 1, optional)\n- `limit`: integer (default 10, optional)\n- `bloodGroup`: 'A_POSITIVE' | ... (optional filter)\n- `urgency`: 'CRITICAL' | 'URGENT' | 'REGULAR' (optional filter)\n- `status`: 'PENDING' | 'ACCEPTED' | 'FULFILLED' | 'CANCELED' (optional)\n- `sortBy`: string (e.g. 'createdAt', 'neededBy', 'urgency', default 'createdAt')\n- `sortOrder`: 'asc' | 'desc' (default 'desc')\n\n**✅ Success Response:**\n- `200 OK - Returns { meta: { page, limit, total, totalPages }, data: [...] }.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid query parameters`\n\n> **💡 Implementation Note:** Automatically excludes records where `isDeleted: true`."
+            "description": "Public paginated request discovery. Success data contains { meta: { page, limit, total, totalPages }, result: [...] }. Safe projection excludes contact details, requester accounts, assignments, notes and coordinates. Filters: bloodGroup, urgency (NORMAL/URGENT/CRITICAL), status (OPEN/MATCHED/FULFILLED/CANCELLED), searchTerm (up to 200 chars). page: 1-1000000; limit: 1-100. sortBy: createdAt/updatedAt/urgency/unitsNeeded; sortOrder: asc/desc. Unknown keys and invalid/repeated query parameters return 400. Deleted records are excluded."
           },
           "response": []
         },
@@ -894,7 +894,9 @@
                   "pm.test(\"Single blood request returned\", function () {",
                   "    pm.expect(res.success).to.eql(true);",
                   "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get(\"requestId\"));",
-                  "    pm.expect(res.data.requester).to.be.an('object');",
+                  "});",
+                  "pm.test(\"Public detail excludes private workspace fields\", function () {",
+                  "  [\"requester\", \"requesterId\", \"contactNumber\", \"latitude\", \"longitude\", \"notes\", \"assignments\", \"payments\"].forEach(function(key) { pm.expect(res.data).not.to.have.property(key); });",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -916,7 +918,254 @@
                 "{{requestId}}"
               ]
             },
-            "description": "### 📋 Endpoint Overview\nRetrieves complete details of a specific blood request by its unique UUID.\n\n**🔒 Access Control & Authentication:**\n`Public`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns complete blood request details including recipient info, donations, and payment logs.`\n\n**❌ Potential Error Responses:**\n- `404 Not Found - Request does not exist or has been soft-deleted`"
+            "description": "Public anonymous request detail. Returns only safe patient, blood group, units, hospital, urgency/status and timestamp fields. Contact data, requester identity, coordinates, notes and assignments are excluded. Use the authenticated workspace endpoint for authorized coordination detail. Invalid UUID: 400. Missing/deleted request: 404."
+          },
+          "response": []
+        },
+        {
+          "name": "4a. Get My Blood Requests (Owned Pagination & Global Summary)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Owned list and global summary contract\", function () {",
+                  "  pm.expect(res.success).to.eql(true);",
+                  "  pm.expect(res.data.result).to.be.an(\"array\");",
+                  "  pm.expect(res.data.meta).to.have.all.keys(\"page\", \"limit\", \"total\", \"totalPages\");",
+                  "  pm.expect(res.data.summary).to.have.all.keys(\"total\", \"open\", \"matched\", \"fulfilled\", \"cancelled\");",
+                  "  var s = res.data.summary;",
+                  "  pm.expect(s.total).to.eql(s.open + s.matched + s.fulfilled + s.cancelled);",
+                  "  pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\");",
+                  "  res.data.result.forEach(function(row) { [\"requester\", \"contactNumber\", \"notes\", \"assignments\"].forEach(function(key) { pm.expect(row).not.to.have.property(key); }); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/mine?page=1&limit=10&sortBy=createdAt&sortOrder=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "createdAt"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "desc"
+                }
+              ]
+            },
+            "description": "Requires Recipient or Admin. Owner is derived from the verified session; Admin also sees only their own records. meta.total is filtered; summary counts all own non-deleted requests independent of filters/page. Supports searchTerm, bloodGroup, urgency, status, page (1-1000000), limit (1-100), sortBy (createdAt/updatedAt/urgency/unitsNeeded), sortOrder (asc/desc). Unknown identity keys are rejected. Change page/filters manually and verify summary remains unchanged."
+          },
+          "response": []
+        },
+        {
+          "name": "4b. Get Request Workspace (Owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Authorized workspace projection\", function () {",
+                  "  pm.expect(res.success).to.eql(true);",
+                  "  pm.expect(res.data.id).to.eql(pm.variables.get(\"requestId\"));",
+                  "  [\"requesterId\", \"contactNumber\", \"latitude\", \"longitude\", \"notes\", \"assignments\"].forEach(function(key) { pm.expect(res.data).to.have.property(key); });",
+                  "  pm.expect(res.data.assignments).to.be.an(\"array\");",
+                  "  pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\");",
+                  "  res.data.assignments.forEach(function(a) {",
+                  "    pm.expect(a.donor).to.have.all.keys(\"id\", \"name\", \"phone\", \"donorProfile\");",
+                  "    if (a.donor.donorProfile) pm.expect(a.donor.donorProfile).to.have.all.keys(\"bloodGroup\", \"phone\");",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/workspace",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "workspace"
+              ]
+            },
+            "description": "Run recipient login and Create Emergency Blood Request first. Uses the owned requestId before the later delete step. Owner/admin only: returns contact/location/notes and limited assignment donor contacts. Unrelated recipient or missing/deleted record: 404. Donor/blocked: 403. Anonymous: 401. Malformed UUID or any query key: 400. To check owner isolation manually, replace the bearer token with another recipient token; expect 404 and no private data."
+          },
+          "response": []
+        },
+        {
+          "name": "4c. Get Request Workspace (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "var res = pm.response.json();",
+                  "pm.test(\"Authorized workspace projection\", function () {",
+                  "  pm.expect(res.success).to.eql(true);",
+                  "  pm.expect(res.data.id).to.eql(pm.variables.get(\"requestId\"));",
+                  "  [\"requesterId\", \"contactNumber\", \"latitude\", \"longitude\", \"notes\", \"assignments\"].forEach(function(key) { pm.expect(res.data).to.have.property(key); });",
+                  "  pm.expect(res.data.assignments).to.be.an(\"array\");",
+                  "  pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\");",
+                  "  res.data.assignments.forEach(function(a) {",
+                  "    pm.expect(a.donor).to.have.all.keys(\"id\", \"name\", \"phone\", \"donorProfile\");",
+                  "    if (a.donor.donorProfile) pm.expect(a.donor.donorProfile).to.have.all.keys(\"bloodGroup\", \"phone\");",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/workspace",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "workspace"
+              ]
+            },
+            "description": "Run Admin login first. Admin can inspect any non-deleted request workspace; explicit projection excludes credentials and unrelated donor profile fields."
+          },
+          "response": []
+        },
+        {
+          "name": "4d. Reject Forged Owner on My Requests (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP 400\", function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/mine?requesterId={{donorUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "requesterId",
+                  "value": "{{donorUserId}}"
+                }
+              ]
+            },
+            "description": "Identity cannot be supplied in query parameters. The recipient session remains the only source of ownership."
+          },
+          "response": []
+        },
+        {
+          "name": "4e. Reject Donor Workspace Access (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP 403\", function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/workspace",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "workspace"
+              ]
+            },
+            "description": "Run Donor login first. Even an assigned donor cannot use this owner/admin workspace endpoint."
           },
           "response": []
         },
