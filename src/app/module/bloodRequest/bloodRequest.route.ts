@@ -19,6 +19,12 @@ router.post(
 router.get("/", BloodRequestController.getAllBloodRequests);
 
 router.get(
+	"/mine",
+	auth(Role.RECIPIENT, Role.ADMIN),
+	BloodRequestController.getMyBloodRequests,
+);
+
+router.get(
 	"/:id/matching-donors",
 	auth(Role.RECIPIENT, Role.ADMIN),
 	validateRequest(DonationValidation.matchingDonorsQuerySchema),

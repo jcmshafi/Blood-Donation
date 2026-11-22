@@ -2,8 +2,27 @@ import type { Request, Response } from "express";
 import httpStatus from "http-status";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
-import { publicRequestQuerySchema, publicRequestIdSchema } from "./bloodRequest.public";
+import {
+	publicRequestQuerySchema,
+	publicRequestIdSchema,
+} from "./bloodRequest.public";
 import { BloodRequestService } from "./bloodRequest.service";
+import {
+	getOwnedBloodRequests,
+	ownedRequestQuerySchema,
+} from "./bloodRequest.owned";
+
+const getMyBloodRequests = catchAsync(async (req: Request, res: Response) => {
+	const filters = ownedRequestQuerySchema.parse(req.query);
+	const result = await getOwnedBloodRequests(req.user!.userId, filters);
+	res.setHeader("Cache-Control", "private, no-store");
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Your blood requests retrieved successfully",
+		data: result,
+	});
+});
 
 const createBloodRequest = catchAsync(async (req: Request, res: Response) => {
 	const requesterId = req.user!.userId;
@@ -81,6 +100,7 @@ const deleteBloodRequest = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const BloodRequestController = {
+	getMyBloodRequests,
 	createBloodRequest,
 	getAllBloodRequests,
 	getBloodRequestById,
