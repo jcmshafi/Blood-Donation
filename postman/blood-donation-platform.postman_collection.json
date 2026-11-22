@@ -1325,7 +1325,8 @@
                   "    pm.expect(res.success).to.eql(true);",
                   "    pm.expect(res.data.compatibleBloodGroups).to.be.an('array');",
                   "    pm.expect(res.data.donors).to.be.an('array');",
-                  "});"
+                  "});",
+                  "pm.test(\"Private response\", function () { pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\"); });"
                 ],
                 "type": "text/javascript"
               }
@@ -1353,7 +1354,7 @@
                 "matching-donors"
               ]
             },
-            "description": "### 📋 Endpoint Overview\nDiscovers active, eligible donors compatible with the blood request based on medical ABO compatibility rules and proximity.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns array of compatible donors with calculated distance (km) ranked closest first.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-owner recipient or unauthorized role`\n- `404 Not Found - Blood request not found`\n\n> **💡 Implementation Note:** Uses Haversine formula on hospital vs donor latitude/longitude. Donors within the 90-day cooldown are automatically excluded."
+            "description": "### 📋 Endpoint Overview\nDiscovers active, eligible donors compatible with the blood request based on medical ABO compatibility rules and proximity.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns array of compatible donors with calculated distance (km) ranked closest first.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-owner recipient or unauthorized role`\n- `404 Not Found - Blood request not found`\n\n> **💡 Implementation Note:** Uses Haversine formula on hospital vs donor latitude/longitude. Donors within the 90-day cooldown are automatically excluded.\n\nOwner/Admin authorization is checked before any matching-cache read. An unrelated recipient receives 404, including after an owner warms the cache. Missing/deleted requests: 404; invalid UUID: 400. Responses are private, no-store. Use a non-deleted requestId owned by recipientAccessToken."
           },
           "response": []
         },
@@ -1373,7 +1374,8 @@
                   "    if (res.data.donors.length > 0) {",
                   "        pm.expect(res.data.donors[0].distanceKm).to.be.at.most(10);",
                   "    }",
-                  "});"
+                  "});",
+                  "pm.test(\"Private response\", function () { pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\"); });"
                 ],
                 "type": "text/javascript"
               }
@@ -1407,7 +1409,94 @@
                 }
               ]
             },
-            "description": "### 📋 Endpoint Overview\nDiscovers matching donors filtered strictly within a maximum geographic radius (e.g. 10 km).\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n- `maxDistanceKm`: number (e.g. 10, query parameter)\n\n**✅ Success Response:**\n- `200 OK - Returns compatible donors within 10km radius sorted by proximity.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid distance number`\n- `404 Not Found`"
+            "description": "### 📋 Endpoint Overview\nDiscovers matching donors filtered strictly within a maximum geographic radius (e.g. 10 km).\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n- `maxDistanceKm`: number (e.g. 10, query parameter)\n\n**✅ Success Response:**\n- `200 OK - Returns compatible donors within 10km radius sorted by proximity.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid distance number`\n- `404 Not Found`\n\nOwner/Admin authorization is checked before any matching-cache read. An unrelated recipient receives 404, including after an owner warms the cache. Missing/deleted requests: 404; invalid UUID: 400. Responses are private, no-store. Use a non-deleted requestId owned by recipientAccessToken."
+          },
+          "response": []
+        },
+        {
+          "name": "14c. Matching as Admin (Authorized Warm Cache)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Response contains compatible blood groups and donor list', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.compatibleBloodGroups).to.be.an('array');",
+                  "    pm.expect(res.data.donors).to.be.an('array');",
+                  "});",
+                  "pm.test(\"Private response\", function () { pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"private, no-store\"); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/matching-donors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "matching-donors"
+              ]
+            },
+            "description": "### 📋 Endpoint Overview\nDiscovers active, eligible donors compatible with the blood request based on medical ABO compatibility rules and proximity.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{requestId}})\n\n**✅ Success Response:**\n- `200 OK - Returns array of compatible donors with calculated distance (km) ranked closest first.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-owner recipient or unauthorized role`\n- `404 Not Found - Blood request not found`\n\n> **💡 Implementation Note:** Uses Haversine formula on hospital vs donor latitude/longitude. Donors within the 90-day cooldown are automatically excluded.\n\nOwner/Admin authorization is checked before any matching-cache read. An unrelated recipient receives 404, including after an owner warms the cache. Missing/deleted requests: 404; invalid UUID: 400. Responses are private, no-store. Use a non-deleted requestId owned by recipientAccessToken."
+          },
+          "response": []
+        },
+        {
+          "name": "14d. Matching as Unrelated Recipient (Warm Cache Denial)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Unrelated recipient denied after cache warmup\", function () { pm.response.to.have.status(404); pm.expect(pm.response.json()).not.to.have.property(\"data\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherRecipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blood-requests/{{requestId}}/matching-donors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blood-requests",
+                "{{requestId}}",
+                "matching-donors"
+              ]
+            },
+            "description": "First run request 14 as the request owner to warm matching cache. Set otherRecipientAccessToken to a valid login token for a DIFFERENT active recipient, keeping the same non-deleted requestId. Expect 404 and no donor data. Do not use the owner token. Missing/expired token instead returns 401. This read-only check does not create accounts or requests."
           },
           "response": []
         },
@@ -2235,6 +2324,11 @@
     {
       "key": "bkashPaymentId",
       "value": ""
+    },
+    {
+      "key": "otherRecipientAccessToken",
+      "value": "",
+      "type": "string"
     }
   ]
 }

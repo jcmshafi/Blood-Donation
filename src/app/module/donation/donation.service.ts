@@ -80,7 +80,26 @@ export const calculateDistanceKm = (
 const getMatchingDonors = async (
 	requestId: string,
 	query: IMatchingDonorsQuery,
+	userId: string,
+	role: Role,
 ): Promise<IMatchingDonorsResponse> => {
+	if (role !== Role.RECIPIENT && role !== Role.ADMIN) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"Matching access is not permitted",
+		);
+	}
+	// Recheck current ownership/deletion on every call, including cache hits.
+	const bloodRequest = await prisma.bloodRequest.findUnique({
+		where: { id: requestId, isDeleted: false },
+	});
+
+	if (!bloodRequest) {
+		throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
+	}
+	if (role !== Role.ADMIN && bloodRequest.requesterId !== userId) {
+		throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
+	}
 	const cacheKey = `cache:matching-donors:${requestId}:${JSON.stringify(query)}`;
 	const cachedData = await cache.get(cacheKey);
 	if (cachedData) {
@@ -89,14 +108,6 @@ const getMatchingDonors = async (
 		} catch {
 			// fallback to fresh query if parse fails
 		}
-	}
-
-	const bloodRequest = await prisma.bloodRequest.findUnique({
-		where: { id: requestId, isDeleted: false },
-	});
-
-	if (!bloodRequest) {
-		throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
 	}
 
 	const reqBloodGroup = bloodRequest.bloodGroup as BloodGroup;
@@ -258,66 +269,103 @@ const acceptBloodRequest = async (
 	}
 
 	// 2. ACID Transaction with concurrency lock to avoid race conditions
-	const assignment = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-		const bloodRequest = await tx.bloodRequest.findUnique({
-			where: { id: requestId, isDeleted: false },
-		});
+	const assignment = await prisma.$transaction(
+		async (tx: Prisma.TransactionClient) => {
+			const bloodRequest = await tx.bloodRequest.findUnique({
+				where: { id: requestId, isDeleted: false },
+			});
 
-		if (!bloodRequest) {
-			throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
-		}
+			if (!bloodRequest) {
+				throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
+			}
 
-		if (bloodRequest.requesterId === donorUserId) {
-			throw new AppError(
-				httpStatus.BAD_REQUEST,
-				"You cannot accept your own blood request.",
-			);
-		}
-
-		// Biological compatibility check
-		if (donorProfile.bloodGroup) {
-			const reqBloodGroup = bloodRequest.bloodGroup as BloodGroup;
-			const compatible = BLOOD_COMPATIBILITY[reqBloodGroup];
-			const donorBloodGroup = donorProfile.bloodGroup as BloodGroup;
-			if (!compatible.includes(donorBloodGroup)) {
+			if (bloodRequest.requesterId === donorUserId) {
 				throw new AppError(
 					httpStatus.BAD_REQUEST,
-					`Your blood group (${donorProfile.bloodGroup}) is not biologically compatible with this request (${bloodRequest.bloodGroup}).`,
+					"You cannot accept your own blood request.",
 				);
 			}
-		}
 
-		// State & Concurrency validation: Request must not be already fulfilled or closed
-		if (
-			bloodRequest.status === RequestStatus.FULFILLED ||
-			bloodRequest.status === RequestStatus.CANCELLED ||
-			bloodRequest.unitsFulfilled >= bloodRequest.unitsNeeded
-		) {
-			throw new AppError(
-				httpStatus.CONFLICT,
-				"This blood request has already been fulfilled or closed by other donors.",
-			);
-		}
+			// Biological compatibility check
+			if (donorProfile.bloodGroup) {
+				const reqBloodGroup = bloodRequest.bloodGroup as BloodGroup;
+				const compatible = BLOOD_COMPATIBILITY[reqBloodGroup];
+				const donorBloodGroup = donorProfile.bloodGroup as BloodGroup;
+				if (!compatible.includes(donorBloodGroup)) {
+					throw new AppError(
+						httpStatus.BAD_REQUEST,
+						`Your blood group (${donorProfile.bloodGroup}) is not biologically compatible with this request (${bloodRequest.bloodGroup}).`,
+					);
+				}
+			}
 
-		// Check if donor is already assigned to this request
-		const existingAssignment = await tx.donationAssignment.findUnique({
-			where: {
-				requestId_donorId: {
-					requestId,
-					donorId: donorUserId,
-				},
-			},
-		});
-
-		if (existingAssignment) {
-			if (existingAssignment.status !== DonationStatus.CANCELLED) {
+			// State & Concurrency validation: Request must not be already fulfilled or closed
+			if (
+				bloodRequest.status === RequestStatus.FULFILLED ||
+				bloodRequest.status === RequestStatus.CANCELLED ||
+				bloodRequest.unitsFulfilled >= bloodRequest.unitsNeeded
+			) {
 				throw new AppError(
 					httpStatus.CONFLICT,
-					"You have already accepted this blood request.",
+					"This blood request has already been fulfilled or closed by other donors.",
 				);
 			}
 
-			// Reactivate previously cancelled assignment
+			// Check if donor is already assigned to this request
+			const existingAssignment = await tx.donationAssignment.findUnique({
+				where: {
+					requestId_donorId: {
+						requestId,
+						donorId: donorUserId,
+					},
+				},
+			});
+
+			if (existingAssignment) {
+				if (existingAssignment.status !== DonationStatus.CANCELLED) {
+					throw new AppError(
+						httpStatus.CONFLICT,
+						"You have already accepted this blood request.",
+					);
+				}
+
+				// Reactivate previously cancelled assignment
+				const nextUnits = bloodRequest.unitsFulfilled + 1;
+				const nextStatus =
+					nextUnits >= bloodRequest.unitsNeeded
+						? RequestStatus.FULFILLED
+						: RequestStatus.MATCHED;
+
+				await tx.bloodRequest.update({
+					where: { id: requestId },
+					data: {
+						unitsFulfilled: nextUnits,
+						status: nextStatus,
+					},
+				});
+
+				return tx.donationAssignment.update({
+					where: { id: existingAssignment.id },
+					data: {
+						status: DonationStatus.ASSIGNED,
+						notes: payload.notes || existingAssignment.notes,
+						completedAt: null,
+					},
+					include: {
+						request: true,
+						donor: {
+							select: {
+								id: true,
+								name: true,
+								email: true,
+								phone: true,
+							},
+						},
+					},
+				});
+			}
+
+			// Increment units fulfilled and transition request status
 			const nextUnits = bloodRequest.unitsFulfilled + 1;
 			const nextStatus =
 				nextUnits >= bloodRequest.unitsNeeded
@@ -332,12 +380,13 @@ const acceptBloodRequest = async (
 				},
 			});
 
-			return tx.donationAssignment.update({
-				where: { id: existingAssignment.id },
+			// Create donation assignment record
+			return tx.donationAssignment.create({
 				data: {
+					requestId,
+					donorId: donorUserId,
 					status: DonationStatus.ASSIGNED,
-					notes: payload.notes || existingAssignment.notes,
-					completedAt: null,
+					notes: payload.notes,
 				},
 				include: {
 					request: true,
@@ -351,44 +400,8 @@ const acceptBloodRequest = async (
 					},
 				},
 			});
-		}
-
-		// Increment units fulfilled and transition request status
-		const nextUnits = bloodRequest.unitsFulfilled + 1;
-		const nextStatus =
-			nextUnits >= bloodRequest.unitsNeeded
-				? RequestStatus.FULFILLED
-				: RequestStatus.MATCHED;
-
-		await tx.bloodRequest.update({
-			where: { id: requestId },
-			data: {
-				unitsFulfilled: nextUnits,
-				status: nextStatus,
-			},
-		});
-
-		// Create donation assignment record
-		return tx.donationAssignment.create({
-			data: {
-				requestId,
-				donorId: donorUserId,
-				status: DonationStatus.ASSIGNED,
-				notes: payload.notes,
-			},
-			include: {
-				request: true,
-				donor: {
-					select: {
-						id: true,
-						name: true,
-						email: true,
-						phone: true,
-					},
-				},
-			},
-		});
-	});
+		},
+	);
 
 	// Invalidate caches upon donor assignment
 	await Promise.all([
@@ -461,83 +474,85 @@ const updateDonationStatus = async (
 		);
 	}
 
-	const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-		if (payload.status === DonationStatus.COMPLETED) {
-			const completedAssignment = await tx.donationAssignment.update({
-				where: { id: assignmentId },
-				data: {
-					status: DonationStatus.COMPLETED,
-					completedAt: new Date(),
-					notes: payload.notes || assignment.notes,
-				},
-				include: {
-					request: true,
-					donor: {
-						select: {
-							id: true,
-							name: true,
-							email: true,
-							phone: true,
+	const updated = await prisma.$transaction(
+		async (tx: Prisma.TransactionClient) => {
+			if (payload.status === DonationStatus.COMPLETED) {
+				const completedAssignment = await tx.donationAssignment.update({
+					where: { id: assignmentId },
+					data: {
+						status: DonationStatus.COMPLETED,
+						completedAt: new Date(),
+						notes: payload.notes || assignment.notes,
+					},
+					include: {
+						request: true,
+						donor: {
+							select: {
+								id: true,
+								name: true,
+								email: true,
+								phone: true,
+							},
 						},
 					},
-				},
-			});
+				});
 
-			// Atomically update donor's profile: lastDonationDate, totalDonations, isAvailable
-			await tx.donorProfile.update({
-				where: { userId: assignment.donorId },
-				data: {
-					lastDonationDate: new Date(),
-					totalDonations: { increment: 1 },
-					isAvailable: false, // 90-day cooldown commences
-				},
-			});
+				// Atomically update donor's profile: lastDonationDate, totalDonations, isAvailable
+				await tx.donorProfile.update({
+					where: { userId: assignment.donorId },
+					data: {
+						lastDonationDate: new Date(),
+						totalDonations: { increment: 1 },
+						isAvailable: false, // 90-day cooldown commences
+					},
+				});
 
-			return completedAssignment;
-		}
+				return completedAssignment;
+			}
 
-		if (payload.status === DonationStatus.CANCELLED) {
-			const cancelledAssignment = await tx.donationAssignment.update({
-				where: { id: assignmentId },
-				data: {
-					status: DonationStatus.CANCELLED,
-					notes: payload.notes || assignment.notes,
-				},
-				include: {
-					request: true,
-					donor: {
-						select: {
-							id: true,
-							name: true,
-							email: true,
-							phone: true,
+			if (payload.status === DonationStatus.CANCELLED) {
+				const cancelledAssignment = await tx.donationAssignment.update({
+					where: { id: assignmentId },
+					data: {
+						status: DonationStatus.CANCELLED,
+						notes: payload.notes || assignment.notes,
+					},
+					include: {
+						request: true,
+						donor: {
+							select: {
+								id: true,
+								name: true,
+								email: true,
+								phone: true,
+							},
 						},
 					},
-				},
-			});
+				});
 
-			// Roll back fulfilled units and status on the blood request
-			const currentUnits = assignment.request.unitsFulfilled;
-			const nextUnits = Math.max(0, currentUnits - 1);
-			const nextStatus =
-				nextUnits === 0 ? RequestStatus.OPEN : RequestStatus.MATCHED;
+				// Roll back fulfilled units and status on the blood request
+				const currentUnits = assignment.request.unitsFulfilled;
+				const nextUnits = Math.max(0, currentUnits - 1);
+				const nextStatus =
+					nextUnits === 0 ? RequestStatus.OPEN : RequestStatus.MATCHED;
 
-			await tx.bloodRequest.update({
-				where: { id: assignment.requestId },
-				data: {
-					unitsFulfilled: nextUnits,
-					status: nextStatus,
-				},
-			});
+				await tx.bloodRequest.update({
+					where: { id: assignment.requestId },
+					data: {
+						unitsFulfilled: nextUnits,
+						status: nextStatus,
+					},
+				});
 
-			return cancelledAssignment;
-		}
+				return cancelledAssignment;
+			}
 
-		throw new AppError(
-			httpStatus.BAD_REQUEST,
-			"Invalid target donation status.",
-		);
-	});
+			throw new AppError(
+				httpStatus.BAD_REQUEST,
+				"Invalid target donation status.",
+			);
+		},
+	);
 
 	// Invalidate caches upon donation status transition
 	await Promise.all([

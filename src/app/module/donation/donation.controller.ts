@@ -3,16 +3,21 @@ import httpStatus from "http-status";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
 import { DonationService } from "./donation.service";
+import { publicRequestIdSchema } from "../bloodRequest/bloodRequest.public";
 
 const getMatchingDonors = catchAsync(async (req: Request, res: Response) => {
-	const requestId = req.params.id as string;
+	res.setHeader("Cache-Control", "private, no-store");
+	const requestId = publicRequestIdSchema.parse(req.params.id);
 	const maxDistanceKm = req.query.maxDistanceKm
 		? Number(req.query.maxDistanceKm)
 		: undefined;
 
-	const result = await DonationService.getMatchingDonors(requestId, {
-		maxDistanceKm,
-	});
+	const result = await DonationService.getMatchingDonors(
+		requestId,
+		{ maxDistanceKm },
+		req.user!.userId,
+		req.user!.role,
+	);
 
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
@@ -69,8 +74,7 @@ const getMyDonationHistory = catchAsync(async (req: Request, res: Response) => {
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
 		success: true,
-		message:
-			"Donor donation history and statistics retrieved successfully",
+		message: "Donor donation history and statistics retrieved successfully",
 		data: result,
 	});
 });
