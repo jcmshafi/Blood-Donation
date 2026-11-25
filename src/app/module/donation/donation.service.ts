@@ -564,80 +564,8 @@ const updateDonationStatus = async (
 	return updated;
 };
 
-const getMyDonationHistory = async (donorUserId: string) => {
-	const donorProfile = await prisma.donorProfile.findUnique({
-		where: { userId: donorUserId },
-	});
-
-	const assignments = await prisma.donationAssignment.findMany({
-		where: { donorId: donorUserId },
-		include: {
-			request: {
-				select: {
-					id: true,
-					patientName: true,
-					bloodGroup: true,
-					unitsNeeded: true,
-					unitsFulfilled: true,
-					hospitalName: true,
-					hospitalAddress: true,
-					urgency: true,
-					status: true,
-					createdAt: true,
-				},
-			},
-		},
-		orderBy: { createdAt: "desc" },
-	});
-
-	const now = new Date();
-	const lastDonationDate = donorProfile?.lastDonationDate || null;
-	let nextEligibleDate: Date | null = null;
-	let isEligibleNow = true;
-	let daysUntilEligible = 0;
-
-	if (lastDonationDate) {
-		const eligibleTime = lastDonationDate.getTime() + 90 * 24 * 60 * 60 * 1000;
-		nextEligibleDate = new Date(eligibleTime);
-		if (now.getTime() < eligibleTime) {
-			isEligibleNow = false;
-			daysUntilEligible = Math.ceil(
-				(eligibleTime - now.getTime()) / (24 * 60 * 60 * 1000),
-			);
-		}
-	}
-
-	const totalAssigned = assignments.length;
-	const totalCompleted = assignments.filter(
-		(a: (typeof assignments)[number]) => a.status === DonationStatus.COMPLETED,
-	).length;
-	const totalCancelled = assignments.filter(
-		(a: (typeof assignments)[number]) => a.status === DonationStatus.CANCELLED,
-	).length;
-	const totalActive = assignments.filter(
-		(a: (typeof assignments)[number]) => a.status === DonationStatus.ASSIGNED,
-	).length;
-
-	return {
-		summary: {
-			totalDonations: donorProfile?.totalDonations || totalCompleted,
-			totalAssigned,
-			totalCompleted,
-			totalCancelled,
-			totalActive,
-			isAvailable: donorProfile?.isAvailable ?? false,
-			lastDonationDate,
-			nextEligibleDate,
-			isEligibleNow,
-			daysUntilEligible,
-		},
-		donations: assignments,
-	};
-};
-
 export const DonationService = {
 	getMatchingDonors,
 	acceptBloodRequest,
 	updateDonationStatus,
-	getMyDonationHistory,
 };

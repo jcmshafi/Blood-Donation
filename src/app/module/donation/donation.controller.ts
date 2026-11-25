@@ -2,6 +2,10 @@ import type { Request, Response } from "express";
 import httpStatus from "http-status";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
+import {
+	donationHistoryQuerySchema,
+	getDonationHistory,
+} from "./donation.history";
 import { DonationService } from "./donation.service";
 import { publicRequestIdSchema } from "../bloodRequest/bloodRequest.public";
 
@@ -67,9 +71,11 @@ const updateDonationStatus = catchAsync(async (req: Request, res: Response) => {
 });
 
 const getMyDonationHistory = catchAsync(async (req: Request, res: Response) => {
+	res.setHeader("Cache-Control", "private, no-store");
 	const donorUserId = req.user!.userId;
 
-	const result = await DonationService.getMyDonationHistory(donorUserId);
+	const filters = donationHistoryQuerySchema.parse(req.query);
+	const result = await getDonationHistory(donorUserId, filters);
 
 	sendResponse(res, {
 		statusCode: httpStatus.OK,

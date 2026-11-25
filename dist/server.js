@@ -13,7 +13,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
-import httpStatus17 from "http-status";
+import httpStatus18 from "http-status";
 
 // src/app/config/index.ts
 import dotenv from "dotenv";
@@ -650,6 +650,10 @@ try {
   isRedisConnected = false;
 }
 var cache = {
+  close() {
+    redisInstance?.disconnect();
+    isRedisConnected = false;
+  },
   async get(key) {
     if (redisInstance && isRedisConnected) {
       try {
@@ -1545,6 +1549,105 @@ import { Router as Router3 } from "express";
 // src/app/module/donation/donation.controller.ts
 import httpStatus10 from "http-status";
 
+// src/app/module/donation/donation.history.ts
+import { z as z3 } from "zod";
+var positiveInteger = (maximum, fallback) => z3.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z3.number().int().min(1).max(maximum)).default(fallback);
+var donationHistoryQuerySchema = z3.object({
+  status: z3.nativeEnum(DonationStatus).optional(),
+  page: positiveInteger(1e6, 1),
+  limit: positiveInteger(100, 10),
+  sortBy: z3.enum(["createdAt", "updatedAt", "completedAt"]).default("createdAt"),
+  sortOrder: z3.enum(["asc", "desc"]).default("desc")
+}).strict();
+var DAY_MS = 24 * 60 * 60 * 1e3;
+var requestSelect = {
+  id: true,
+  patientName: true,
+  bloodGroup: true,
+  unitsNeeded: true,
+  unitsFulfilled: true,
+  hospitalName: true,
+  hospitalAddress: true,
+  urgency: true,
+  status: true,
+  createdAt: true
+};
+async function getDonationHistory(donorUserId, filters) {
+  const { status, page, limit, sortBy, sortOrder } = filters;
+  const ownerScope = { donorId: donorUserId };
+  const where = {
+    ...ownerScope,
+    ...status ? { status } : {}
+  };
+  const snapshot = await prisma.$transaction(
+    async (tx) => {
+      const donorProfile = await tx.donorProfile.findUnique({
+        where: { userId: donorUserId }
+      });
+      const total = await tx.donationAssignment.count({ where });
+      const donations = await tx.donationAssignment.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        // Nullable completedAt sorts last; id is the stable tie breaker.
+        orderBy: [
+          sortBy === "completedAt" ? { completedAt: { sort: sortOrder, nulls: "last" } } : { [sortBy]: sortOrder },
+          { id: "asc" }
+        ],
+        include: { request: { select: requestSelect } }
+      });
+      const groups = await tx.donationAssignment.groupBy({
+        by: ["status"],
+        where: ownerScope,
+        _count: { _all: true }
+      });
+      return { donorProfile, total, donations, groups };
+    },
+    { isolationLevel: "RepeatableRead" }
+  );
+  const counts = { ASSIGNED: 0, COMPLETED: 0, CANCELLED: 0 };
+  for (const group of snapshot.groups) {
+    counts[group.status] = group._count._all;
+  }
+  const totalAssigned = counts.ASSIGNED + counts.COMPLETED + counts.CANCELLED;
+  const now = /* @__PURE__ */ new Date();
+  const lastDonationDate = snapshot.donorProfile?.lastDonationDate ?? null;
+  let nextEligibleDate = null;
+  let isEligibleNow = true;
+  let daysUntilEligible = 0;
+  if (lastDonationDate) {
+    const eligibleTime = lastDonationDate.getTime() + 90 * DAY_MS;
+    nextEligibleDate = new Date(eligibleTime);
+    if (now.getTime() < eligibleTime) {
+      isEligibleNow = false;
+      daysUntilEligible = Math.ceil((eligibleTime - now.getTime()) / DAY_MS);
+    }
+  }
+  return {
+    meta: {
+      page,
+      limit,
+      total: snapshot.total,
+      totalPages: Math.ceil(snapshot.total / limit)
+    },
+    // Summary counts every assignment the donor owns, independent of
+    // the status filter and the current page.
+    summary: {
+      totalDonations: snapshot.donorProfile?.totalDonations || counts.COMPLETED,
+      totalAssigned,
+      totalCompleted: counts.COMPLETED,
+      totalCancelled: counts.CANCELLED,
+      totalActive: counts.ASSIGNED,
+      isAvailable: snapshot.donorProfile?.isAvailable ?? false,
+      lastDonationDate,
+      nextEligibleDate,
+      isEligibleNow,
+      daysUntilEligible
+    },
+    donations: snapshot.donations
+  };
+}
+
 // src/app/module/donation/donation.service.ts
 import httpStatus9 from "http-status";
 
@@ -1684,7 +1787,22 @@ var calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c * 100) / 100;
 };
-var getMatchingDonors = async (requestId, query) => {
+var getMatchingDonors = async (requestId, query, userId, role) => {
+  if (role !== Role.RECIPIENT && role !== Role.ADMIN) {
+    throw new AppError(
+      httpStatus9.FORBIDDEN,
+      "Matching access is not permitted"
+    );
+  }
+  const bloodRequest = await prisma.bloodRequest.findUnique({
+    where: { id: requestId, isDeleted: false }
+  });
+  if (!bloodRequest) {
+    throw new AppError(httpStatus9.NOT_FOUND, "Blood request not found");
+  }
+  if (role !== Role.ADMIN && bloodRequest.requesterId !== userId) {
+    throw new AppError(httpStatus9.NOT_FOUND, "Blood request not found");
+  }
   const cacheKey = `cache:matching-donors:${requestId}:${JSON.stringify(query)}`;
   const cachedData = await cache.get(cacheKey);
   if (cachedData) {
@@ -1692,12 +1810,6 @@ var getMatchingDonors = async (requestId, query) => {
       return JSON.parse(cachedData);
     } catch {
     }
-  }
-  const bloodRequest = await prisma.bloodRequest.findUnique({
-    where: { id: requestId, isDeleted: false }
-  });
-  if (!bloodRequest) {
-    throw new AppError(httpStatus9.NOT_FOUND, "Blood request not found");
   }
   const reqBloodGroup = bloodRequest.bloodGroup;
   const compatibleGroups = BLOOD_COMPATIBILITY[reqBloodGroup];
@@ -1822,66 +1934,96 @@ var acceptBloodRequest = async (requestId, donorUserId, payload) => {
       );
     }
   }
-  const assignment = await prisma.$transaction(async (tx) => {
-    const bloodRequest = await tx.bloodRequest.findUnique({
-      where: { id: requestId, isDeleted: false }
-    });
-    if (!bloodRequest) {
-      throw new AppError(httpStatus9.NOT_FOUND, "Blood request not found");
-    }
-    if (bloodRequest.requesterId === donorUserId) {
-      throw new AppError(
-        httpStatus9.BAD_REQUEST,
-        "You cannot accept your own blood request."
-      );
-    }
-    if (donorProfile.bloodGroup) {
-      const reqBloodGroup = bloodRequest.bloodGroup;
-      const compatible = BLOOD_COMPATIBILITY[reqBloodGroup];
-      const donorBloodGroup = donorProfile.bloodGroup;
-      if (!compatible.includes(donorBloodGroup)) {
+  const assignment = await prisma.$transaction(
+    async (tx) => {
+      const bloodRequest = await tx.bloodRequest.findUnique({
+        where: { id: requestId, isDeleted: false }
+      });
+      if (!bloodRequest) {
+        throw new AppError(httpStatus9.NOT_FOUND, "Blood request not found");
+      }
+      if (bloodRequest.requesterId === donorUserId) {
         throw new AppError(
           httpStatus9.BAD_REQUEST,
-          `Your blood group (${donorProfile.bloodGroup}) is not biologically compatible with this request (${bloodRequest.bloodGroup}).`
+          "You cannot accept your own blood request."
         );
       }
-    }
-    if (bloodRequest.status === RequestStatus.FULFILLED || bloodRequest.status === RequestStatus.CANCELLED || bloodRequest.unitsFulfilled >= bloodRequest.unitsNeeded) {
-      throw new AppError(
-        httpStatus9.CONFLICT,
-        "This blood request has already been fulfilled or closed by other donors."
-      );
-    }
-    const existingAssignment = await tx.donationAssignment.findUnique({
-      where: {
-        requestId_donorId: {
-          requestId,
-          donorId: donorUserId
+      if (donorProfile.bloodGroup) {
+        const reqBloodGroup = bloodRequest.bloodGroup;
+        const compatible = BLOOD_COMPATIBILITY[reqBloodGroup];
+        const donorBloodGroup = donorProfile.bloodGroup;
+        if (!compatible.includes(donorBloodGroup)) {
+          throw new AppError(
+            httpStatus9.BAD_REQUEST,
+            `Your blood group (${donorProfile.bloodGroup}) is not biologically compatible with this request (${bloodRequest.bloodGroup}).`
+          );
         }
       }
-    });
-    if (existingAssignment) {
-      if (existingAssignment.status !== DonationStatus.CANCELLED) {
+      if (bloodRequest.status === RequestStatus.FULFILLED || bloodRequest.status === RequestStatus.CANCELLED || bloodRequest.unitsFulfilled >= bloodRequest.unitsNeeded) {
         throw new AppError(
           httpStatus9.CONFLICT,
-          "You have already accepted this blood request."
+          "This blood request has already been fulfilled or closed by other donors."
         );
       }
-      const nextUnits2 = bloodRequest.unitsFulfilled + 1;
-      const nextStatus2 = nextUnits2 >= bloodRequest.unitsNeeded ? RequestStatus.FULFILLED : RequestStatus.MATCHED;
+      const existingAssignment = await tx.donationAssignment.findUnique({
+        where: {
+          requestId_donorId: {
+            requestId,
+            donorId: donorUserId
+          }
+        }
+      });
+      if (existingAssignment) {
+        if (existingAssignment.status !== DonationStatus.CANCELLED) {
+          throw new AppError(
+            httpStatus9.CONFLICT,
+            "You have already accepted this blood request."
+          );
+        }
+        const nextUnits2 = bloodRequest.unitsFulfilled + 1;
+        const nextStatus2 = nextUnits2 >= bloodRequest.unitsNeeded ? RequestStatus.FULFILLED : RequestStatus.MATCHED;
+        await tx.bloodRequest.update({
+          where: { id: requestId },
+          data: {
+            unitsFulfilled: nextUnits2,
+            status: nextStatus2
+          }
+        });
+        return tx.donationAssignment.update({
+          where: { id: existingAssignment.id },
+          data: {
+            status: DonationStatus.ASSIGNED,
+            notes: payload.notes || existingAssignment.notes,
+            completedAt: null
+          },
+          include: {
+            request: true,
+            donor: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true
+              }
+            }
+          }
+        });
+      }
+      const nextUnits = bloodRequest.unitsFulfilled + 1;
+      const nextStatus = nextUnits >= bloodRequest.unitsNeeded ? RequestStatus.FULFILLED : RequestStatus.MATCHED;
       await tx.bloodRequest.update({
         where: { id: requestId },
         data: {
-          unitsFulfilled: nextUnits2,
-          status: nextStatus2
+          unitsFulfilled: nextUnits,
+          status: nextStatus
         }
       });
-      return tx.donationAssignment.update({
-        where: { id: existingAssignment.id },
+      return tx.donationAssignment.create({
         data: {
+          requestId,
+          donorId: donorUserId,
           status: DonationStatus.ASSIGNED,
-          notes: payload.notes || existingAssignment.notes,
-          completedAt: null
+          notes: payload.notes
         },
         include: {
           request: true,
@@ -1896,35 +2038,7 @@ var acceptBloodRequest = async (requestId, donorUserId, payload) => {
         }
       });
     }
-    const nextUnits = bloodRequest.unitsFulfilled + 1;
-    const nextStatus = nextUnits >= bloodRequest.unitsNeeded ? RequestStatus.FULFILLED : RequestStatus.MATCHED;
-    await tx.bloodRequest.update({
-      where: { id: requestId },
-      data: {
-        unitsFulfilled: nextUnits,
-        status: nextStatus
-      }
-    });
-    return tx.donationAssignment.create({
-      data: {
-        requestId,
-        donorId: donorUserId,
-        status: DonationStatus.ASSIGNED,
-        notes: payload.notes
-      },
-      include: {
-        request: true,
-        donor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true
-          }
-        }
-      }
-    });
-  });
+  );
   await Promise.all([
     cache.delByPattern("cache:matching-donors:*"),
     cache.delByPattern("cache:blood-requests:*"),
@@ -1979,74 +2093,76 @@ var updateDonationStatus = async (assignmentId, userId, userRole, payload) => {
       "Donation assignment has already been cancelled and cannot be modified."
     );
   }
-  const updated = await prisma.$transaction(async (tx) => {
-    if (payload.status === DonationStatus.COMPLETED) {
-      const completedAssignment = await tx.donationAssignment.update({
-        where: { id: assignmentId },
-        data: {
-          status: DonationStatus.COMPLETED,
-          completedAt: /* @__PURE__ */ new Date(),
-          notes: payload.notes || assignment.notes
-        },
-        include: {
-          request: true,
-          donor: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true
+  const updated = await prisma.$transaction(
+    async (tx) => {
+      if (payload.status === DonationStatus.COMPLETED) {
+        const completedAssignment = await tx.donationAssignment.update({
+          where: { id: assignmentId },
+          data: {
+            status: DonationStatus.COMPLETED,
+            completedAt: /* @__PURE__ */ new Date(),
+            notes: payload.notes || assignment.notes
+          },
+          include: {
+            request: true,
+            donor: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true
+              }
             }
           }
-        }
-      });
-      await tx.donorProfile.update({
-        where: { userId: assignment.donorId },
-        data: {
-          lastDonationDate: /* @__PURE__ */ new Date(),
-          totalDonations: { increment: 1 },
-          isAvailable: false
-          // 90-day cooldown commences
-        }
-      });
-      return completedAssignment;
-    }
-    if (payload.status === DonationStatus.CANCELLED) {
-      const cancelledAssignment = await tx.donationAssignment.update({
-        where: { id: assignmentId },
-        data: {
-          status: DonationStatus.CANCELLED,
-          notes: payload.notes || assignment.notes
-        },
-        include: {
-          request: true,
-          donor: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true
+        });
+        await tx.donorProfile.update({
+          where: { userId: assignment.donorId },
+          data: {
+            lastDonationDate: /* @__PURE__ */ new Date(),
+            totalDonations: { increment: 1 },
+            isAvailable: false
+            // 90-day cooldown commences
+          }
+        });
+        return completedAssignment;
+      }
+      if (payload.status === DonationStatus.CANCELLED) {
+        const cancelledAssignment = await tx.donationAssignment.update({
+          where: { id: assignmentId },
+          data: {
+            status: DonationStatus.CANCELLED,
+            notes: payload.notes || assignment.notes
+          },
+          include: {
+            request: true,
+            donor: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true
+              }
             }
           }
-        }
-      });
-      const currentUnits = assignment.request.unitsFulfilled;
-      const nextUnits = Math.max(0, currentUnits - 1);
-      const nextStatus = nextUnits === 0 ? RequestStatus.OPEN : RequestStatus.MATCHED;
-      await tx.bloodRequest.update({
-        where: { id: assignment.requestId },
-        data: {
-          unitsFulfilled: nextUnits,
-          status: nextStatus
-        }
-      });
-      return cancelledAssignment;
+        });
+        const currentUnits = assignment.request.unitsFulfilled;
+        const nextUnits = Math.max(0, currentUnits - 1);
+        const nextStatus = nextUnits === 0 ? RequestStatus.OPEN : RequestStatus.MATCHED;
+        await tx.bloodRequest.update({
+          where: { id: assignment.requestId },
+          data: {
+            unitsFulfilled: nextUnits,
+            status: nextStatus
+          }
+        });
+        return cancelledAssignment;
+      }
+      throw new AppError(
+        httpStatus9.BAD_REQUEST,
+        "Invalid target donation status."
+      );
     }
-    throw new AppError(
-      httpStatus9.BAD_REQUEST,
-      "Invalid target donation status."
-    );
-  });
+  );
   await Promise.all([
     cache.delByPattern("cache:matching-donors:*"),
     cache.delByPattern("cache:blood-requests:*"),
@@ -2054,85 +2170,51 @@ var updateDonationStatus = async (assignmentId, userId, userRole, payload) => {
   ]);
   return updated;
 };
-var getMyDonationHistory = async (donorUserId) => {
-  const donorProfile = await prisma.donorProfile.findUnique({
-    where: { userId: donorUserId }
-  });
-  const assignments = await prisma.donationAssignment.findMany({
-    where: { donorId: donorUserId },
-    include: {
-      request: {
-        select: {
-          id: true,
-          patientName: true,
-          bloodGroup: true,
-          unitsNeeded: true,
-          unitsFulfilled: true,
-          hospitalName: true,
-          hospitalAddress: true,
-          urgency: true,
-          status: true,
-          createdAt: true
-        }
-      }
-    },
-    orderBy: { createdAt: "desc" }
-  });
-  const now = /* @__PURE__ */ new Date();
-  const lastDonationDate = donorProfile?.lastDonationDate || null;
-  let nextEligibleDate = null;
-  let isEligibleNow = true;
-  let daysUntilEligible = 0;
-  if (lastDonationDate) {
-    const eligibleTime = lastDonationDate.getTime() + 90 * 24 * 60 * 60 * 1e3;
-    nextEligibleDate = new Date(eligibleTime);
-    if (now.getTime() < eligibleTime) {
-      isEligibleNow = false;
-      daysUntilEligible = Math.ceil(
-        (eligibleTime - now.getTime()) / (24 * 60 * 60 * 1e3)
-      );
-    }
-  }
-  const totalAssigned = assignments.length;
-  const totalCompleted = assignments.filter(
-    (a) => a.status === DonationStatus.COMPLETED
-  ).length;
-  const totalCancelled = assignments.filter(
-    (a) => a.status === DonationStatus.CANCELLED
-  ).length;
-  const totalActive = assignments.filter(
-    (a) => a.status === DonationStatus.ASSIGNED
-  ).length;
-  return {
-    summary: {
-      totalDonations: donorProfile?.totalDonations || totalCompleted,
-      totalAssigned,
-      totalCompleted,
-      totalCancelled,
-      totalActive,
-      isAvailable: donorProfile?.isAvailable ?? false,
-      lastDonationDate,
-      nextEligibleDate,
-      isEligibleNow,
-      daysUntilEligible
-    },
-    donations: assignments
-  };
-};
 var DonationService = {
   getMatchingDonors,
   acceptBloodRequest,
-  updateDonationStatus,
-  getMyDonationHistory
+  updateDonationStatus
+};
+
+// src/app/module/bloodRequest/bloodRequest.public.ts
+import { z as z4 } from "zod";
+var positiveInteger2 = (maximum, fallback) => z4.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z4.number().int().min(1).max(maximum)).default(fallback);
+var publicRequestQuerySchema = z4.object({
+  searchTerm: z4.string().trim().max(200).optional(),
+  bloodGroup: z4.nativeEnum(BloodGroup).optional(),
+  urgency: z4.nativeEnum(UrgencyLevel).optional(),
+  status: z4.nativeEnum(RequestStatus).optional(),
+  page: positiveInteger2(1e6, 1),
+  limit: positiveInteger2(100, 10),
+  sortBy: z4.enum(["createdAt", "updatedAt", "urgency", "unitsNeeded"]).default("createdAt"),
+  sortOrder: z4.enum(["asc", "desc"]).default("desc")
+}).strict();
+var publicRequestIdSchema = z4.string().uuid();
+var publicRequestSelect = {
+  id: true,
+  patientName: true,
+  bloodGroup: true,
+  unitsNeeded: true,
+  unitsFulfilled: true,
+  hospitalName: true,
+  hospitalAddress: true,
+  urgency: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true
 };
 
 // src/app/module/donation/donation.controller.ts
 var getMatchingDonors2 = catchAsync(async (req, res) => {
-  const requestId = req.params.id;
+  res.setHeader("Cache-Control", "private, no-store");
+  const requestId = publicRequestIdSchema.parse(req.params.id);
   const maxDistanceKm = req.query.maxDistanceKm ? Number(req.query.maxDistanceKm) : void 0;
-  const result = await DonationService.getMatchingDonors(requestId, {
-    maxDistanceKm
-  });
+  const result = await DonationService.getMatchingDonors(
+    requestId,
+    { maxDistanceKm },
+    req.user.userId,
+    req.user.role
+  );
   sendResponse(res, {
     statusCode: httpStatus10.OK,
     success: true,
@@ -2172,9 +2254,11 @@ var updateDonationStatus2 = catchAsync(async (req, res) => {
     data: result
   });
 });
-var getMyDonationHistory2 = catchAsync(async (req, res) => {
+var getMyDonationHistory = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
   const donorUserId = req.user.userId;
-  const result = await DonationService.getMyDonationHistory(donorUserId);
+  const filters = donationHistoryQuerySchema.parse(req.query);
+  const result = await getDonationHistory(donorUserId, filters);
   sendResponse(res, {
     statusCode: httpStatus10.OK,
     success: true,
@@ -2186,27 +2270,27 @@ var DonationController = {
   getMatchingDonors: getMatchingDonors2,
   acceptBloodRequest: acceptBloodRequest2,
   updateDonationStatus: updateDonationStatus2,
-  getMyDonationHistory: getMyDonationHistory2
+  getMyDonationHistory
 };
 
 // src/app/module/donation/donation.validation.ts
-import { z as z3 } from "zod";
-var matchingDonorsQuerySchema = z3.object({
-  query: z3.object({
-    maxDistanceKm: z3.string().optional().transform((val) => val ? Number(val) : void 0).refine((val) => val === void 0 || !Number.isNaN(val) && val > 0, {
+import { z as z5 } from "zod";
+var matchingDonorsQuerySchema = z5.object({
+  query: z5.object({
+    maxDistanceKm: z5.string().optional().transform((val) => val ? Number(val) : void 0).refine((val) => val === void 0 || !Number.isNaN(val) && val > 0, {
       message: "maxDistanceKm must be a positive number"
     })
   }).optional()
 });
-var acceptBloodRequestSchema = z3.object({
-  body: z3.object({
-    notes: z3.string().max(500, "Notes cannot exceed 500 characters").optional()
+var acceptBloodRequestSchema = z5.object({
+  body: z5.object({
+    notes: z5.string().max(500, "Notes cannot exceed 500 characters").optional()
   })
 });
-var updateDonationStatusSchema = z3.object({
-  body: z3.object({
-    status: z3.enum([DonationStatus.COMPLETED, DonationStatus.CANCELLED]),
-    notes: z3.string().max(500, "Notes cannot exceed 500 characters").optional()
+var updateDonationStatusSchema = z5.object({
+  body: z5.object({
+    status: z5.enum([DonationStatus.COMPLETED, DonationStatus.CANCELLED]),
+    notes: z5.string().max(500, "Notes cannot exceed 500 characters").optional()
   })
 });
 var DonationValidation = {
@@ -2216,7 +2300,7 @@ var DonationValidation = {
 };
 
 // src/app/module/bloodRequest/bloodRequest.controller.ts
-import httpStatus12 from "http-status";
+import httpStatus13 from "http-status";
 
 // src/app/module/bloodRequest/bloodRequest.service.ts
 import httpStatus11 from "http-status";
@@ -2265,7 +2349,7 @@ var createBloodRequest = async (requesterId, payload) => {
   return result;
 };
 var getAllBloodRequests = async (filters) => {
-  const cacheKey = `cache:blood-requests:${JSON.stringify(filters)}`;
+  const cacheKey = `cache:blood-requests:public-v2:${JSON.stringify(filters)}`;
   const cachedData = await cache.get(cacheKey);
   if (cachedData) {
     try {
@@ -2314,16 +2398,8 @@ var getAllBloodRequests = async (filters) => {
       where,
       skip,
       take: parsedLimit,
-      orderBy: {
-        [sortBy]: sortOrder === "asc" ? "asc" : "desc"
-      },
-      include: {
-        requester: {
-          omit: {
-            password: true
-          }
-        }
-      }
+      orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
+      select: publicRequestSelect
     })
   ]);
   const totalPages = Math.ceil(total / parsedLimit);
@@ -2342,25 +2418,7 @@ var getAllBloodRequests = async (filters) => {
 var getBloodRequestById = async (id) => {
   const request = await prisma.bloodRequest.findUnique({
     where: { id, isDeleted: false },
-    include: {
-      requester: {
-        omit: {
-          password: true
-        }
-      },
-      assignments: {
-        include: {
-          donor: {
-            omit: {
-              password: true
-            },
-            include: {
-              donorProfile: true
-            }
-          }
-        }
-      }
-    }
+    select: publicRequestSelect
   });
   if (!request) {
     throw new AppError(httpStatus11.NOT_FOUND, "Blood request not found");
@@ -2450,7 +2508,163 @@ var BloodRequestService = {
   deleteBloodRequest
 };
 
+// src/app/module/bloodRequest/bloodRequest.workspace.ts
+import httpStatus12 from "http-status";
+import { z as z6 } from "zod";
+var workspaceRequestQuerySchema = z6.object({}).strict();
+var workspaceRequestSelect = {
+  ...publicRequestSelect,
+  requesterId: true,
+  latitude: true,
+  longitude: true,
+  contactNumber: true,
+  notes: true,
+  assignments: {
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    select: {
+      id: true,
+      donorId: true,
+      status: true,
+      notes: true,
+      completedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      donor: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          donorProfile: { select: { bloodGroup: true, phone: true } }
+        }
+      }
+    }
+  }
+};
+async function getWorkspaceBloodRequest(id, userId, role) {
+  if (role !== Role.RECIPIENT && role !== Role.ADMIN) {
+    throw new AppError(
+      httpStatus12.FORBIDDEN,
+      "Workspace access is not permitted"
+    );
+  }
+  const result = await prisma.bloodRequest.findFirst({
+    where: {
+      id,
+      isDeleted: false,
+      ...role === Role.ADMIN ? {} : { requesterId: userId }
+    },
+    select: workspaceRequestSelect
+  });
+  if (!result)
+    throw new AppError(httpStatus12.NOT_FOUND, "Blood request not found");
+  return result;
+}
+
+// src/app/module/bloodRequest/bloodRequest.owned.ts
+var ownedRequestQuerySchema = publicRequestQuerySchema;
+async function getOwnedBloodRequests(requesterId, filters) {
+  const {
+    page,
+    limit,
+    searchTerm,
+    bloodGroup,
+    urgency,
+    status,
+    sortBy,
+    sortOrder
+  } = filters;
+  const ownerScope = { requesterId, isDeleted: false };
+  const where = {
+    ...ownerScope,
+    ...bloodGroup ? { bloodGroup } : {},
+    ...urgency ? { urgency } : {},
+    ...status ? { status } : {},
+    ...searchTerm ? {
+      OR: [
+        { patientName: { contains: searchTerm, mode: "insensitive" } },
+        { hospitalName: { contains: searchTerm, mode: "insensitive" } },
+        { hospitalAddress: { contains: searchTerm, mode: "insensitive" } }
+      ]
+    } : {}
+  };
+  return prisma.$transaction(
+    async (tx) => {
+      const total = await tx.bloodRequest.count({ where });
+      const result = await tx.bloodRequest.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
+        select: publicRequestSelect
+      });
+      const groups = await tx.bloodRequest.groupBy({
+        by: ["status"],
+        where: ownerScope,
+        _count: { _all: true }
+      });
+      const summary = {
+        total: 0,
+        open: 0,
+        matched: 0,
+        fulfilled: 0,
+        cancelled: 0
+      };
+      for (const group of groups) {
+        const count = group._count._all;
+        summary.total += count;
+        switch (group.status) {
+          case "OPEN":
+            summary.open = count;
+            break;
+          case "MATCHED":
+            summary.matched = count;
+            break;
+          case "FULFILLED":
+            summary.fulfilled = count;
+            break;
+          case "CANCELLED":
+            summary.cancelled = count;
+            break;
+        }
+      }
+      return {
+        meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+        result,
+        summary
+      };
+    },
+    { isolationLevel: "RepeatableRead" }
+  );
+}
+
 // src/app/module/bloodRequest/bloodRequest.controller.ts
+var getWorkspaceRequest = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const id = publicRequestIdSchema.parse(req.params.id);
+  workspaceRequestQuerySchema.parse(req.query);
+  const result = await getWorkspaceBloodRequest(
+    id,
+    req.user.userId,
+    req.user.role
+  );
+  sendResponse(res, {
+    statusCode: httpStatus13.OK,
+    success: true,
+    message: "Request workspace retrieved successfully",
+    data: result
+  });
+});
+var getMyBloodRequests = catchAsync(async (req, res) => {
+  const filters = ownedRequestQuerySchema.parse(req.query);
+  const result = await getOwnedBloodRequests(req.user.userId, filters);
+  res.setHeader("Cache-Control", "private, no-store");
+  sendResponse(res, {
+    statusCode: httpStatus13.OK,
+    success: true,
+    message: "Your blood requests retrieved successfully",
+    data: result
+  });
+});
 var createBloodRequest2 = catchAsync(async (req, res) => {
   const requesterId = req.user.userId;
   const result = await BloodRequestService.createBloodRequest(
@@ -2458,36 +2672,27 @@ var createBloodRequest2 = catchAsync(async (req, res) => {
     req.body
   );
   sendResponse(res, {
-    statusCode: httpStatus12.CREATED,
+    statusCode: httpStatus13.CREATED,
     success: true,
     message: "Emergency blood request created successfully",
     data: result
   });
 });
 var getAllBloodRequests2 = catchAsync(async (req, res) => {
-  const filters = {
-    searchTerm: req.query.searchTerm ? String(req.query.searchTerm) : void 0,
-    bloodGroup: req.query.bloodGroup ? String(req.query.bloodGroup) : void 0,
-    urgency: req.query.urgency ? String(req.query.urgency) : void 0,
-    status: req.query.status ? String(req.query.status) : void 0,
-    page: req.query.page ? Number(req.query.page) : 1,
-    limit: req.query.limit ? Number(req.query.limit) : 10,
-    sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-    sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc"
-  };
+  const filters = publicRequestQuerySchema.parse(req.query);
   const result = await BloodRequestService.getAllBloodRequests(filters);
   sendResponse(res, {
-    statusCode: httpStatus12.OK,
+    statusCode: httpStatus13.OK,
     success: true,
     message: "Blood requests retrieved successfully",
     data: result
   });
 });
 var getBloodRequestById2 = catchAsync(async (req, res) => {
-  const id = req.params.id;
+  const id = publicRequestIdSchema.parse(req.params.id);
   const result = await BloodRequestService.getBloodRequestById(id);
   sendResponse(res, {
-    statusCode: httpStatus12.OK,
+    statusCode: httpStatus13.OK,
     success: true,
     message: "Blood request details retrieved successfully",
     data: result
@@ -2504,7 +2709,7 @@ var updateBloodRequest2 = catchAsync(async (req, res) => {
     req.body
   );
   sendResponse(res, {
-    statusCode: httpStatus12.OK,
+    statusCode: httpStatus13.OK,
     success: true,
     message: "Blood request updated successfully",
     data: result
@@ -2516,13 +2721,15 @@ var deleteBloodRequest2 = catchAsync(async (req, res) => {
   const userRole = req.user.role;
   await BloodRequestService.deleteBloodRequest(id, userId, userRole);
   sendResponse(res, {
-    statusCode: httpStatus12.OK,
+    statusCode: httpStatus13.OK,
     success: true,
     message: "Blood request deleted successfully",
     data: null
   });
 });
 var BloodRequestController = {
+  getWorkspaceRequest,
+  getMyBloodRequests,
   createBloodRequest: createBloodRequest2,
   getAllBloodRequests: getAllBloodRequests2,
   getBloodRequestById: getBloodRequestById2,
@@ -2531,36 +2738,36 @@ var BloodRequestController = {
 };
 
 // src/app/module/bloodRequest/bloodRequest.validation.ts
-import { z as z4 } from "zod";
-var createBloodRequestSchema = z4.object({
-  body: z4.object({
-    patientName: z4.string().min(2, "Patient name must be at least 2 characters"),
-    bloodGroup: z4.nativeEnum(BloodGroup, {
+import { z as z7 } from "zod";
+var createBloodRequestSchema = z7.object({
+  body: z7.object({
+    patientName: z7.string().min(2, "Patient name must be at least 2 characters"),
+    bloodGroup: z7.nativeEnum(BloodGroup, {
       error: "Valid blood group is required"
     }),
-    unitsNeeded: z4.number().int().min(1, "At least 1 unit is required").default(1),
-    hospitalName: z4.string().min(2, "Hospital name is required"),
-    hospitalAddress: z4.string().min(2, "Hospital address is required"),
-    latitude: z4.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90"),
-    longitude: z4.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180"),
-    contactNumber: z4.string().min(6, "Valid contact number is required"),
-    urgency: z4.nativeEnum(UrgencyLevel).optional().default(UrgencyLevel.NORMAL),
-    notes: z4.string().optional()
+    unitsNeeded: z7.number().int().min(1, "At least 1 unit is required").default(1),
+    hospitalName: z7.string().min(2, "Hospital name is required"),
+    hospitalAddress: z7.string().min(2, "Hospital address is required"),
+    latitude: z7.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90"),
+    longitude: z7.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180"),
+    contactNumber: z7.string().min(6, "Valid contact number is required"),
+    urgency: z7.nativeEnum(UrgencyLevel).optional().default(UrgencyLevel.NORMAL),
+    notes: z7.string().optional()
   })
 });
-var updateBloodRequestSchema = z4.object({
-  body: z4.object({
-    patientName: z4.string().min(2).optional(),
-    bloodGroup: z4.nativeEnum(BloodGroup).optional(),
-    unitsNeeded: z4.number().int().min(1).optional(),
-    hospitalName: z4.string().min(2).optional(),
-    hospitalAddress: z4.string().min(2).optional(),
-    latitude: z4.number().min(-90).max(90).optional(),
-    longitude: z4.number().min(-180).max(180).optional(),
-    contactNumber: z4.string().min(6).optional(),
-    urgency: z4.nativeEnum(UrgencyLevel).optional(),
-    status: z4.nativeEnum(RequestStatus).optional(),
-    notes: z4.string().optional()
+var updateBloodRequestSchema = z7.object({
+  body: z7.object({
+    patientName: z7.string().min(2).optional(),
+    bloodGroup: z7.nativeEnum(BloodGroup).optional(),
+    unitsNeeded: z7.number().int().min(1).optional(),
+    hospitalName: z7.string().min(2).optional(),
+    hospitalAddress: z7.string().min(2).optional(),
+    latitude: z7.number().min(-90).max(90).optional(),
+    longitude: z7.number().min(-180).max(180).optional(),
+    contactNumber: z7.string().min(6).optional(),
+    urgency: z7.nativeEnum(UrgencyLevel).optional(),
+    status: z7.nativeEnum(RequestStatus).optional(),
+    notes: z7.string().optional()
   })
 });
 var BloodRequestValidation = {
@@ -2578,6 +2785,11 @@ router3.post(
 );
 router3.get("/", BloodRequestController.getAllBloodRequests);
 router3.get(
+  "/mine",
+  auth(Role.RECIPIENT, Role.ADMIN),
+  BloodRequestController.getMyBloodRequests
+);
+router3.get(
   "/:id/matching-donors",
   auth(Role.RECIPIENT, Role.ADMIN),
   validateRequest(DonationValidation.matchingDonorsQuerySchema),
@@ -2588,6 +2800,11 @@ router3.post(
   auth(Role.DONOR),
   validateRequest(DonationValidation.acceptBloodRequestSchema),
   DonationController.acceptBloodRequest
+);
+router3.get(
+  "/:id/workspace",
+  auth(Role.RECIPIENT, Role.ADMIN),
+  BloodRequestController.getWorkspaceRequest
 );
 router3.get("/:id", BloodRequestController.getBloodRequestById);
 router3.patch(
@@ -2619,10 +2836,10 @@ var DonationRoutes = router4;
 import { Router as Router5 } from "express";
 
 // src/app/module/payment/payment.controller.ts
-import httpStatus14 from "http-status";
+import httpStatus15 from "http-status";
 
 // src/app/module/payment/payment.service.ts
-import httpStatus13 from "http-status";
+import httpStatus14 from "http-status";
 
 // src/app/module/payment/bkash.client.ts
 import crypto from "crypto";
@@ -2818,11 +3035,11 @@ var initiateBkashPayment = async (payerId, payload, ipAddress) => {
     where: { id: payload.requestId, isDeleted: false }
   });
   if (!bloodRequest) {
-    throw new AppError(httpStatus13.NOT_FOUND, "Blood request not found");
+    throw new AppError(httpStatus14.NOT_FOUND, "Blood request not found");
   }
   if (bloodRequest.status === RequestStatus.CANCELLED) {
     throw new AppError(
-      httpStatus13.BAD_REQUEST,
+      httpStatus14.BAD_REQUEST,
       "Cannot initiate payment for a cancelled blood request"
     );
   }
@@ -2902,7 +3119,7 @@ var handleBkashCallback = async (payload, ipAddress) => {
     }
   });
   if (!payment) {
-    throw new AppError(httpStatus13.NOT_FOUND, "Payment transaction not found");
+    throw new AppError(httpStatus14.NOT_FOUND, "Payment transaction not found");
   }
   if (payload.status === "cancel") {
     const updated = await prisma.payment.update({
@@ -3026,11 +3243,11 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
     }
   });
   if (!payment) {
-    throw new AppError(httpStatus13.NOT_FOUND, "Payment record not found");
+    throw new AppError(httpStatus14.NOT_FOUND, "Payment record not found");
   }
   if (userRole !== Role.ADMIN && payment.payerId !== userId) {
     throw new AppError(
-      httpStatus13.FORBIDDEN,
+      httpStatus14.FORBIDDEN,
       "You do not have permission to view this payment record"
     );
   }
@@ -3051,7 +3268,7 @@ var initiateBkashPayment2 = catchAsync(async (req, res) => {
     req.ip
   );
   sendResponse(res, {
-    statusCode: httpStatus14.CREATED,
+    statusCode: httpStatus15.CREATED,
     success: true,
     message: "bKash payment initiated successfully",
     data: result
@@ -3061,7 +3278,7 @@ var handleBkashCallback2 = catchAsync(async (req, res) => {
   const paymentID = req.body?.paymentID || req.query.paymentID || "";
   const status = req.body?.status || req.query.status;
   if (!paymentID) {
-    throw new AppError(httpStatus14.BAD_REQUEST, "paymentID query parameter is required");
+    throw new AppError(httpStatus15.BAD_REQUEST, "paymentID query parameter is required");
   }
   const result = await PaymentService.handleBkashCallback(
     { paymentID, status },
@@ -3113,7 +3330,7 @@ var handleBkashCallback2 = catchAsync(async (req, res) => {
 		`);
   }
   sendResponse(res, {
-    statusCode: httpStatus14.OK,
+    statusCode: httpStatus15.OK,
     success: true,
     message: "bKash payment processed successfully",
     data: result
@@ -3125,7 +3342,7 @@ var getPaymentById2 = catchAsync(async (req, res) => {
   const userRole = req.user.role;
   const result = await PaymentService.getPaymentById(id, userId, userRole);
   sendResponse(res, {
-    statusCode: httpStatus14.OK,
+    statusCode: httpStatus15.OK,
     success: true,
     message: "Payment details retrieved successfully",
     data: result
@@ -3138,17 +3355,17 @@ var PaymentController = {
 };
 
 // src/app/module/payment/payment.validation.ts
-import { z as z5 } from "zod";
-var createPaymentSchema = z5.object({
-  body: z5.object({
-    requestId: z5.string().uuid("Valid blood request ID (UUID) is required"),
-    amount: z5.number().positive("Payment amount must be a positive number")
+import { z as z8 } from "zod";
+var createPaymentSchema = z8.object({
+  body: z8.object({
+    requestId: z8.string().uuid("Valid blood request ID (UUID) is required"),
+    amount: z8.number().positive("Payment amount must be a positive number")
   })
 });
-var bkashCallbackSchema = z5.object({
-  body: z5.object({
-    paymentID: z5.string().min(1, "paymentID is required"),
-    status: z5.string().optional()
+var bkashCallbackSchema = z8.object({
+  body: z8.object({
+    paymentID: z8.string().min(1, "paymentID is required"),
+    status: z8.string().optional()
   })
 });
 var PaymentValidation = {
@@ -3173,10 +3390,10 @@ var PaymentRoutes = router5;
 import { Router as Router6 } from "express";
 
 // src/app/module/user/user.controller.ts
-import httpStatus16 from "http-status";
+import httpStatus17 from "http-status";
 
 // src/app/module/user/user.service.ts
-import httpStatus15 from "http-status";
+import httpStatus16 from "http-status";
 var getMyProfile = async (userId) => {
   const user = await prisma.user.findUnique({
     where: { id: userId, isDeleted: false },
@@ -3188,7 +3405,7 @@ var getMyProfile = async (userId) => {
     }
   });
   if (!user) {
-    throw new AppError(httpStatus15.NOT_FOUND, "User profile not found");
+    throw new AppError(httpStatus16.NOT_FOUND, "User profile not found");
   }
   return user;
 };
@@ -3197,7 +3414,7 @@ var updateMyProfile = async (userId, payload) => {
     where: { id: userId, isDeleted: false }
   });
   if (!user) {
-    throw new AppError(httpStatus15.NOT_FOUND, "User profile not found");
+    throw new AppError(httpStatus16.NOT_FOUND, "User profile not found");
   }
   const updatedUser = await prisma.user.update({
     where: { id: userId },
@@ -3220,11 +3437,11 @@ var updateDonorProfile = async (userId, payload) => {
     where: { id: userId, isDeleted: false }
   });
   if (!user) {
-    throw new AppError(httpStatus15.NOT_FOUND, "User not found");
+    throw new AppError(httpStatus16.NOT_FOUND, "User not found");
   }
   if (user.role !== Role.DONOR) {
     throw new AppError(
-      httpStatus15.FORBIDDEN,
+      httpStatus16.FORBIDDEN,
       "Only donors can manage a donor profile"
     );
   }
@@ -3263,7 +3480,7 @@ var getMyProfile2 = catchAsync(async (req, res) => {
   const userId = req.user.userId;
   const result = await UserService.getMyProfile(userId);
   sendResponse(res, {
-    statusCode: httpStatus16.OK,
+    statusCode: httpStatus17.OK,
     success: true,
     message: "User profile fetched successfully",
     data: result
@@ -3273,7 +3490,7 @@ var updateMyProfile2 = catchAsync(async (req, res) => {
   const userId = req.user.userId;
   const result = await UserService.updateMyProfile(userId, req.body);
   sendResponse(res, {
-    statusCode: httpStatus16.OK,
+    statusCode: httpStatus17.OK,
     success: true,
     message: "User profile updated successfully",
     data: result
@@ -3283,7 +3500,7 @@ var updateDonorProfile2 = catchAsync(async (req, res) => {
   const userId = req.user.userId;
   const result = await UserService.updateDonorProfile(userId, req.body);
   sendResponse(res, {
-    statusCode: httpStatus16.OK,
+    statusCode: httpStatus17.OK,
     success: true,
     message: "Donor profile updated successfully",
     data: result
@@ -3296,27 +3513,27 @@ var UserController = {
 };
 
 // src/app/module/user/user.validation.ts
-import { z as z6 } from "zod";
-var updateProfileValidationSchema = z6.object({
-  body: z6.object({
-    name: z6.string().min(2, "Name must be at least 2 characters").optional(),
-    phone: z6.string().optional(),
-    address: z6.string().optional()
+import { z as z9 } from "zod";
+var updateProfileValidationSchema = z9.object({
+  body: z9.object({
+    name: z9.string().min(2, "Name must be at least 2 characters").optional(),
+    phone: z9.string().optional(),
+    address: z9.string().optional()
   })
 });
-var updateDonorProfileValidationSchema = z6.object({
-  body: z6.object({
-    bloodGroup: z6.nativeEnum(BloodGroup, {
+var updateDonorProfileValidationSchema = z9.object({
+  body: z9.object({
+    bloodGroup: z9.nativeEnum(BloodGroup, {
       error: "Invalid blood group"
     }).optional(),
-    isAvailable: z6.boolean().optional(),
-    lastDonationDate: z6.string().refine((val) => !Number.isNaN(Date.parse(val)), {
+    isAvailable: z9.boolean().optional(),
+    lastDonationDate: z9.string().refine((val) => !Number.isNaN(Date.parse(val)), {
       message: "Invalid date format for lastDonationDate (e.g. YYYY-MM-DD or ISO string)"
     }).optional().nullable(),
-    phone: z6.string().optional(),
-    address: z6.string().optional(),
-    latitude: z6.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
-    longitude: z6.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
+    phone: z9.string().optional(),
+    address: z9.string().optional(),
+    latitude: z9.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
+    longitude: z9.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
   })
 });
 var UserValidation = {
@@ -3365,7 +3582,7 @@ app.use("/api/v1/donations", DonationRoutes);
 app.use("/api/v1/payments", PaymentRoutes);
 app.use("/api/v1/admin", AdminRoutes);
 app.get("/", (_req, res) => {
-  res.status(httpStatus17.OK).json({
+  res.status(httpStatus18.OK).json({
     success: true,
     message: "Welcome to Blood Donation & Emergency Platform Backend API",
     data: {
