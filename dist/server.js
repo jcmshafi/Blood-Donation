@@ -573,6 +573,37 @@ var sendResponse = (res, payload) => {
   });
 };
 
+// src/app/module/admin/admin.query.ts
+import { z } from "zod";
+var positiveInteger = (maximum, fallback) => z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().min(1).max(maximum)).default(fallback);
+var text = (maximum) => z.string().trim().min(1).max(maximum);
+var ADMIN_USER_SORT_FIELDS = [
+  "createdAt",
+  "updatedAt",
+  "name",
+  "email",
+  "role",
+  "status"
+];
+var AUDIT_LOG_SORT_FIELDS = ["createdAt", "action", "resource"];
+var adminUsersQuerySchema = z.object({
+  page: positiveInteger(1e6, 1),
+  limit: positiveInteger(100, 10),
+  role: z.nativeEnum(Role).optional(),
+  status: z.nativeEnum(UserStatus).optional(),
+  searchTerm: text(100).optional(),
+  sortBy: z.enum(ADMIN_USER_SORT_FIELDS).default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).default("desc")
+}).strict();
+var auditLogsQuerySchema = z.object({
+  page: positiveInteger(1e6, 1),
+  limit: positiveInteger(100, 20),
+  action: text(100).optional(),
+  resource: text(100).optional(),
+  sortBy: z.enum(AUDIT_LOG_SORT_FIELDS).default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).default("desc")
+}).strict();
+
 // src/app/module/admin/admin.service.ts
 import httpStatus5 from "http-status";
 
@@ -709,15 +740,7 @@ var cache = {
 
 // src/app/module/admin/admin.service.ts
 var getAllUsers = async (filters) => {
-  const {
-    page = 1,
-    limit = 10,
-    role,
-    status,
-    searchTerm,
-    sortBy = "createdAt",
-    sortOrder = "desc"
-  } = filters;
+  const { page, limit, role, status, searchTerm, sortBy, sortOrder } = filters;
   const andConditions = [{ isDeleted: false }];
   if (searchTerm) {
     andConditions.push({
@@ -736,8 +759,8 @@ var getAllUsers = async (filters) => {
     andConditions.push({ status });
   }
   const where = { AND: andConditions };
-  const parsedPage = Number(page) > 0 ? Number(page) : 1;
-  const parsedLimit = Number(limit) > 0 ? Number(limit) : 10;
+  const parsedPage = page;
+  const parsedLimit = limit;
   const skip = (parsedPage - 1) * parsedLimit;
   const [total, result] = await Promise.all([
     prisma.user.count({ where }),
@@ -745,9 +768,8 @@ var getAllUsers = async (filters) => {
       where,
       skip,
       take: parsedLimit,
-      orderBy: {
-        [sortBy]: sortOrder === "asc" ? "asc" : "desc"
-      },
+      // sortBy is allow-listed; id keeps pages stable when values tie.
+      orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
       omit: {
         password: true
       },
@@ -899,14 +921,7 @@ var getDashboardStats = async () => {
   return statsResult;
 };
 var getAuditLogs = async (filters) => {
-  const {
-    page = 1,
-    limit = 20,
-    action,
-    resource,
-    sortBy = "createdAt",
-    sortOrder = "desc"
-  } = filters;
+  const { page, limit, action, resource, sortBy, sortOrder } = filters;
   const andConditions = [];
   if (action) {
     andConditions.push({
@@ -919,8 +934,8 @@ var getAuditLogs = async (filters) => {
     });
   }
   const where = andConditions.length > 0 ? { AND: andConditions } : {};
-  const parsedPage = Number(page) > 0 ? Number(page) : 1;
-  const parsedLimit = Number(limit) > 0 ? Number(limit) : 20;
+  const parsedPage = page;
+  const parsedLimit = limit;
   const skip = (parsedPage - 1) * parsedLimit;
   const [total, result] = await Promise.all([
     prisma.auditLog.count({ where }),
@@ -928,9 +943,7 @@ var getAuditLogs = async (filters) => {
       where,
       skip,
       take: parsedLimit,
-      orderBy: {
-        [sortBy]: sortOrder === "asc" ? "asc" : "desc"
-      },
+      orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
       include: {
         user: {
           select: {
@@ -963,15 +976,8 @@ var AdminService = {
 
 // src/app/module/admin/admin.controller.ts
 var getAllUsers2 = catchAsync(async (req, res) => {
-  const filters = {
-    searchTerm: req.query.searchTerm ? String(req.query.searchTerm) : void 0,
-    role: req.query.role ? String(req.query.role) : void 0,
-    status: req.query.status ? String(req.query.status) : void 0,
-    page: req.query.page ? Number(req.query.page) : 1,
-    limit: req.query.limit ? Number(req.query.limit) : 10,
-    sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-    sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc"
-  };
+  res.setHeader("Cache-Control", "private, no-store");
+  const filters = adminUsersQuerySchema.parse(req.query);
   const result = await AdminService.getAllUsers(filters);
   sendResponse(res, {
     statusCode: httpStatus6.OK,
@@ -1007,14 +1013,8 @@ var getDashboardStats2 = catchAsync(async (_req, res) => {
   });
 });
 var getAuditLogs2 = catchAsync(async (req, res) => {
-  const filters = {
-    action: req.query.action ? String(req.query.action) : void 0,
-    resource: req.query.resource ? String(req.query.resource) : void 0,
-    page: req.query.page ? Number(req.query.page) : 1,
-    limit: req.query.limit ? Number(req.query.limit) : 20,
-    sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-    sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc"
-  };
+  res.setHeader("Cache-Control", "private, no-store");
+  const filters = auditLogsQuerySchema.parse(req.query);
   const result = await AdminService.getAuditLogs(filters);
   sendResponse(res, {
     statusCode: httpStatus6.OK,
@@ -1031,40 +1031,17 @@ var AdminController = {
 };
 
 // src/app/module/admin/admin.validation.ts
-import { z } from "zod";
-var updateUserStatusValidationSchema = z.object({
-  body: z.object({
-    status: z.nativeEnum(UserStatus, {
+import { z as z2 } from "zod";
+var updateUserStatusValidationSchema = z2.object({
+  body: z2.object({
+    status: z2.nativeEnum(UserStatus, {
       error: "Status must be either ACTIVE or BLOCKED"
     }),
-    reason: z.string().max(500, "Reason must not exceed 500 characters").optional()
+    reason: z2.string().max(500, "Reason must not exceed 500 characters").optional()
   })
 });
-var userFilterValidationSchema = z.object({
-  query: z.object({
-    page: z.string().optional(),
-    limit: z.string().optional(),
-    role: z.nativeEnum(Role).optional(),
-    status: z.nativeEnum(UserStatus).optional(),
-    searchTerm: z.string().optional(),
-    sortBy: z.string().optional(),
-    sortOrder: z.enum(["asc", "desc"]).optional()
-  }).optional()
-});
-var auditLogFilterValidationSchema = z.object({
-  query: z.object({
-    page: z.string().optional(),
-    limit: z.string().optional(),
-    action: z.string().optional(),
-    resource: z.string().optional(),
-    sortBy: z.string().optional(),
-    sortOrder: z.enum(["asc", "desc"]).optional()
-  }).optional()
-});
 var AdminValidation = {
-  updateUserStatusValidationSchema,
-  userFilterValidationSchema,
-  auditLogFilterValidationSchema
+  updateUserStatusValidationSchema
 };
 
 // src/app/module/admin/admin.route.ts
@@ -1072,7 +1049,6 @@ var router = Router();
 router.get(
   "/users",
   auth(Role.ADMIN),
-  validateRequest(AdminValidation.userFilterValidationSchema),
   AdminController.getAllUsers
 );
 router.patch(
@@ -1089,7 +1065,6 @@ router.get(
 router.get(
   "/audit-logs",
   auth(Role.ADMIN),
-  validateRequest(AdminValidation.auditLogFilterValidationSchema),
   AdminController.getAuditLogs
 );
 var AdminRoutes = router;
@@ -1473,40 +1448,40 @@ var AuthController = {
 };
 
 // src/app/module/auth/auth.validation.ts
-import { z as z2 } from "zod";
-var registerValidationSchema = z2.object({
-  body: z2.object({
-    name: z2.string().min(2, "Name must be at least 2 characters"),
-    email: z2.string().email("Invalid email format"),
-    password: z2.string().min(6, "Password must be at least 6 characters"),
-    role: z2.enum([Role.DONOR, Role.RECIPIENT], {
+import { z as z3 } from "zod";
+var registerValidationSchema = z3.object({
+  body: z3.object({
+    name: z3.string().min(2, "Name must be at least 2 characters"),
+    email: z3.string().email("Invalid email format"),
+    password: z3.string().min(6, "Password must be at least 6 characters"),
+    role: z3.enum([Role.DONOR, Role.RECIPIENT], {
       error: "Role must be either DONOR or RECIPIENT"
     }).default(Role.RECIPIENT),
-    phone: z2.string().optional(),
-    address: z2.string().optional(),
-    bloodGroup: z2.nativeEnum(BloodGroup).optional(),
-    latitude: z2.number().optional(),
-    longitude: z2.number().optional()
+    phone: z3.string().optional(),
+    address: z3.string().optional(),
+    bloodGroup: z3.nativeEnum(BloodGroup).optional(),
+    latitude: z3.number().optional(),
+    longitude: z3.number().optional()
   })
 });
-var loginValidationSchema = z2.object({
-  body: z2.object({
-    email: z2.string().email("Invalid email format"),
-    password: z2.string().min(1, "Password is required")
+var loginValidationSchema = z3.object({
+  body: z3.object({
+    email: z3.string().email("Invalid email format"),
+    password: z3.string().min(1, "Password is required")
   })
 });
-var googleLoginValidationSchema = z2.object({
-  body: z2.object({
-    idToken: z2.string().min(1, "Google ID token is required"),
-    role: z2.enum([Role.DONOR, Role.RECIPIENT]).optional().default(Role.RECIPIENT)
+var googleLoginValidationSchema = z3.object({
+  body: z3.object({
+    idToken: z3.string().min(1, "Google ID token is required"),
+    role: z3.enum([Role.DONOR, Role.RECIPIENT]).optional().default(Role.RECIPIENT)
   })
 });
-var refreshTokenValidationSchema = z2.object({
-  body: z2.object({
-    refreshToken: z2.string().optional()
+var refreshTokenValidationSchema = z3.object({
+  body: z3.object({
+    refreshToken: z3.string().optional()
   }).optional(),
-  cookies: z2.object({
-    refreshToken: z2.string().optional()
+  cookies: z3.object({
+    refreshToken: z3.string().optional()
   }).optional()
 });
 var AuthValidation = {
@@ -1550,14 +1525,14 @@ import { Router as Router3 } from "express";
 import httpStatus10 from "http-status";
 
 // src/app/module/donation/donation.history.ts
-import { z as z3 } from "zod";
-var positiveInteger = (maximum, fallback) => z3.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z3.number().int().min(1).max(maximum)).default(fallback);
-var donationHistoryQuerySchema = z3.object({
-  status: z3.nativeEnum(DonationStatus).optional(),
-  page: positiveInteger(1e6, 1),
-  limit: positiveInteger(100, 10),
-  sortBy: z3.enum(["createdAt", "updatedAt", "completedAt"]).default("createdAt"),
-  sortOrder: z3.enum(["asc", "desc"]).default("desc")
+import { z as z4 } from "zod";
+var positiveInteger2 = (maximum, fallback) => z4.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z4.number().int().min(1).max(maximum)).default(fallback);
+var donationHistoryQuerySchema = z4.object({
+  status: z4.nativeEnum(DonationStatus).optional(),
+  page: positiveInteger2(1e6, 1),
+  limit: positiveInteger2(100, 10),
+  sortBy: z4.enum(["createdAt", "updatedAt", "completedAt"]).default("createdAt"),
+  sortOrder: z4.enum(["asc", "desc"]).default("desc")
 }).strict();
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var requestSelect = {
@@ -1654,7 +1629,7 @@ import httpStatus9 from "http-status";
 // src/app/utils/sendEmail.ts
 import nodemailer from "nodemailer";
 var sendEmail = async (payload) => {
-  const { to, subject, text, html } = payload;
+  const { to, subject, text: text2, html } = payload;
   const isConfigured = config_default.email_user && config_default.google_app_password && !config_default.email_user.includes("your-email") && !config_default.google_app_password.includes("your-google-app-password");
   if (!isConfigured) {
     console.log(
@@ -1679,7 +1654,7 @@ var sendEmail = async (payload) => {
       from: `"Blood Donation & Emergency Platform" <${config_default.email_user}>`,
       to,
       subject,
-      text: text || subject,
+      text: text2 || subject,
       html
     });
     console.log(
@@ -2177,19 +2152,19 @@ var DonationService = {
 };
 
 // src/app/module/bloodRequest/bloodRequest.public.ts
-import { z as z4 } from "zod";
-var positiveInteger2 = (maximum, fallback) => z4.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z4.number().int().min(1).max(maximum)).default(fallback);
-var publicRequestQuerySchema = z4.object({
-  searchTerm: z4.string().trim().max(200).optional(),
-  bloodGroup: z4.nativeEnum(BloodGroup).optional(),
-  urgency: z4.nativeEnum(UrgencyLevel).optional(),
-  status: z4.nativeEnum(RequestStatus).optional(),
-  page: positiveInteger2(1e6, 1),
-  limit: positiveInteger2(100, 10),
-  sortBy: z4.enum(["createdAt", "updatedAt", "urgency", "unitsNeeded"]).default("createdAt"),
-  sortOrder: z4.enum(["asc", "desc"]).default("desc")
+import { z as z5 } from "zod";
+var positiveInteger3 = (maximum, fallback) => z5.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z5.number().int().min(1).max(maximum)).default(fallback);
+var publicRequestQuerySchema = z5.object({
+  searchTerm: z5.string().trim().max(200).optional(),
+  bloodGroup: z5.nativeEnum(BloodGroup).optional(),
+  urgency: z5.nativeEnum(UrgencyLevel).optional(),
+  status: z5.nativeEnum(RequestStatus).optional(),
+  page: positiveInteger3(1e6, 1),
+  limit: positiveInteger3(100, 10),
+  sortBy: z5.enum(["createdAt", "updatedAt", "urgency", "unitsNeeded"]).default("createdAt"),
+  sortOrder: z5.enum(["asc", "desc"]).default("desc")
 }).strict();
-var publicRequestIdSchema = z4.string().uuid();
+var publicRequestIdSchema = z5.string().uuid();
 var publicRequestSelect = {
   id: true,
   patientName: true,
@@ -2274,23 +2249,23 @@ var DonationController = {
 };
 
 // src/app/module/donation/donation.validation.ts
-import { z as z5 } from "zod";
-var matchingDonorsQuerySchema = z5.object({
-  query: z5.object({
-    maxDistanceKm: z5.string().optional().transform((val) => val ? Number(val) : void 0).refine((val) => val === void 0 || !Number.isNaN(val) && val > 0, {
+import { z as z6 } from "zod";
+var matchingDonorsQuerySchema = z6.object({
+  query: z6.object({
+    maxDistanceKm: z6.string().optional().transform((val) => val ? Number(val) : void 0).refine((val) => val === void 0 || !Number.isNaN(val) && val > 0, {
       message: "maxDistanceKm must be a positive number"
     })
   }).optional()
 });
-var acceptBloodRequestSchema = z5.object({
-  body: z5.object({
-    notes: z5.string().max(500, "Notes cannot exceed 500 characters").optional()
+var acceptBloodRequestSchema = z6.object({
+  body: z6.object({
+    notes: z6.string().max(500, "Notes cannot exceed 500 characters").optional()
   })
 });
-var updateDonationStatusSchema = z5.object({
-  body: z5.object({
-    status: z5.enum([DonationStatus.COMPLETED, DonationStatus.CANCELLED]),
-    notes: z5.string().max(500, "Notes cannot exceed 500 characters").optional()
+var updateDonationStatusSchema = z6.object({
+  body: z6.object({
+    status: z6.enum([DonationStatus.COMPLETED, DonationStatus.CANCELLED]),
+    notes: z6.string().max(500, "Notes cannot exceed 500 characters").optional()
   })
 });
 var DonationValidation = {
@@ -2510,8 +2485,8 @@ var BloodRequestService = {
 
 // src/app/module/bloodRequest/bloodRequest.workspace.ts
 import httpStatus12 from "http-status";
-import { z as z6 } from "zod";
-var workspaceRequestQuerySchema = z6.object({}).strict();
+import { z as z7 } from "zod";
+var workspaceRequestQuerySchema = z7.object({}).strict();
 var workspaceRequestSelect = {
   ...publicRequestSelect,
   requesterId: true,
@@ -2738,36 +2713,36 @@ var BloodRequestController = {
 };
 
 // src/app/module/bloodRequest/bloodRequest.validation.ts
-import { z as z7 } from "zod";
-var createBloodRequestSchema = z7.object({
-  body: z7.object({
-    patientName: z7.string().min(2, "Patient name must be at least 2 characters"),
-    bloodGroup: z7.nativeEnum(BloodGroup, {
+import { z as z8 } from "zod";
+var createBloodRequestSchema = z8.object({
+  body: z8.object({
+    patientName: z8.string().min(2, "Patient name must be at least 2 characters"),
+    bloodGroup: z8.nativeEnum(BloodGroup, {
       error: "Valid blood group is required"
     }),
-    unitsNeeded: z7.number().int().min(1, "At least 1 unit is required").default(1),
-    hospitalName: z7.string().min(2, "Hospital name is required"),
-    hospitalAddress: z7.string().min(2, "Hospital address is required"),
-    latitude: z7.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90"),
-    longitude: z7.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180"),
-    contactNumber: z7.string().min(6, "Valid contact number is required"),
-    urgency: z7.nativeEnum(UrgencyLevel).optional().default(UrgencyLevel.NORMAL),
-    notes: z7.string().optional()
+    unitsNeeded: z8.number().int().min(1, "At least 1 unit is required").default(1),
+    hospitalName: z8.string().min(2, "Hospital name is required"),
+    hospitalAddress: z8.string().min(2, "Hospital address is required"),
+    latitude: z8.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90"),
+    longitude: z8.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180"),
+    contactNumber: z8.string().min(6, "Valid contact number is required"),
+    urgency: z8.nativeEnum(UrgencyLevel).optional().default(UrgencyLevel.NORMAL),
+    notes: z8.string().optional()
   })
 });
-var updateBloodRequestSchema = z7.object({
-  body: z7.object({
-    patientName: z7.string().min(2).optional(),
-    bloodGroup: z7.nativeEnum(BloodGroup).optional(),
-    unitsNeeded: z7.number().int().min(1).optional(),
-    hospitalName: z7.string().min(2).optional(),
-    hospitalAddress: z7.string().min(2).optional(),
-    latitude: z7.number().min(-90).max(90).optional(),
-    longitude: z7.number().min(-180).max(180).optional(),
-    contactNumber: z7.string().min(6).optional(),
-    urgency: z7.nativeEnum(UrgencyLevel).optional(),
-    status: z7.nativeEnum(RequestStatus).optional(),
-    notes: z7.string().optional()
+var updateBloodRequestSchema = z8.object({
+  body: z8.object({
+    patientName: z8.string().min(2).optional(),
+    bloodGroup: z8.nativeEnum(BloodGroup).optional(),
+    unitsNeeded: z8.number().int().min(1).optional(),
+    hospitalName: z8.string().min(2).optional(),
+    hospitalAddress: z8.string().min(2).optional(),
+    latitude: z8.number().min(-90).max(90).optional(),
+    longitude: z8.number().min(-180).max(180).optional(),
+    contactNumber: z8.string().min(6).optional(),
+    urgency: z8.nativeEnum(UrgencyLevel).optional(),
+    status: z8.nativeEnum(RequestStatus).optional(),
+    notes: z8.string().optional()
   })
 });
 var BloodRequestValidation = {
@@ -2871,9 +2846,9 @@ var BkashClientService = class {
         }
       );
       if (response.ok) {
-        const text = await response.text();
+        const text2 = await response.text();
         try {
-          const data = JSON.parse(text);
+          const data = JSON.parse(text2);
           if (data.id_token) {
             this.idToken = data.id_token;
             this.tokenExpiresAt = now + (data.expires_in || 3600) * 1e3;
@@ -2916,9 +2891,9 @@ var BkashClientService = class {
         }
       );
       if (response.ok) {
-        const text = await response.text();
+        const text2 = await response.text();
         try {
-          const data = JSON.parse(text);
+          const data = JSON.parse(text2);
           if (data.paymentID && data.bkashURL) {
             return data;
           }
@@ -2961,9 +2936,9 @@ var BkashClientService = class {
         }
       );
       if (response.ok) {
-        const text = await response.text();
+        const text2 = await response.text();
         try {
-          const data = JSON.parse(text);
+          const data = JSON.parse(text2);
           if (data.trxID) {
             return data;
           }
@@ -3008,9 +2983,9 @@ var BkashClientService = class {
         }
       );
       if (response.ok) {
-        const text = await response.text();
+        const text2 = await response.text();
         try {
-          const data = JSON.parse(text);
+          const data = JSON.parse(text2);
           return data;
         } catch {
         }
@@ -3355,17 +3330,17 @@ var PaymentController = {
 };
 
 // src/app/module/payment/payment.validation.ts
-import { z as z8 } from "zod";
-var createPaymentSchema = z8.object({
-  body: z8.object({
-    requestId: z8.string().uuid("Valid blood request ID (UUID) is required"),
-    amount: z8.number().positive("Payment amount must be a positive number")
+import { z as z9 } from "zod";
+var createPaymentSchema = z9.object({
+  body: z9.object({
+    requestId: z9.string().uuid("Valid blood request ID (UUID) is required"),
+    amount: z9.number().positive("Payment amount must be a positive number")
   })
 });
-var bkashCallbackSchema = z8.object({
-  body: z8.object({
-    paymentID: z8.string().min(1, "paymentID is required"),
-    status: z8.string().optional()
+var bkashCallbackSchema = z9.object({
+  body: z9.object({
+    paymentID: z9.string().min(1, "paymentID is required"),
+    status: z9.string().optional()
   })
 });
 var PaymentValidation = {
@@ -3513,27 +3488,27 @@ var UserController = {
 };
 
 // src/app/module/user/user.validation.ts
-import { z as z9 } from "zod";
-var updateProfileValidationSchema = z9.object({
-  body: z9.object({
-    name: z9.string().min(2, "Name must be at least 2 characters").optional(),
-    phone: z9.string().optional(),
-    address: z9.string().optional()
+import { z as z10 } from "zod";
+var updateProfileValidationSchema = z10.object({
+  body: z10.object({
+    name: z10.string().min(2, "Name must be at least 2 characters").optional(),
+    phone: z10.string().optional(),
+    address: z10.string().optional()
   })
 });
-var updateDonorProfileValidationSchema = z9.object({
-  body: z9.object({
-    bloodGroup: z9.nativeEnum(BloodGroup, {
+var updateDonorProfileValidationSchema = z10.object({
+  body: z10.object({
+    bloodGroup: z10.nativeEnum(BloodGroup, {
       error: "Invalid blood group"
     }).optional(),
-    isAvailable: z9.boolean().optional(),
-    lastDonationDate: z9.string().refine((val) => !Number.isNaN(Date.parse(val)), {
+    isAvailable: z10.boolean().optional(),
+    lastDonationDate: z10.string().refine((val) => !Number.isNaN(Date.parse(val)), {
       message: "Invalid date format for lastDonationDate (e.g. YYYY-MM-DD or ISO string)"
     }).optional().nullable(),
-    phone: z9.string().optional(),
-    address: z9.string().optional(),
-    latitude: z9.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
-    longitude: z9.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
+    phone: z10.string().optional(),
+    address: z10.string().optional(),
+    latitude: z10.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
+    longitude: z10.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
   })
 });
 var UserValidation = {

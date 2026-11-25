@@ -1,27 +1,13 @@
 import type { Request, Response } from "express";
 import httpStatus from "http-status";
-import type { Role, UserStatus } from "../../../generated/prisma/enums";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
-import type {
-	IAdminUserFilterOptions,
-	IAuditLogFilterOptions,
-} from "./admin.interface";
+import { adminUsersQuerySchema, auditLogsQuerySchema } from "./admin.query";
 import { AdminService } from "./admin.service";
 
 const getAllUsers = catchAsync(async (req: Request, res: Response) => {
-	const filters: IAdminUserFilterOptions = {
-		searchTerm: req.query.searchTerm ? String(req.query.searchTerm) : undefined,
-		role: req.query.role ? (String(req.query.role) as Role) : undefined,
-		status: req.query.status
-			? (String(req.query.status) as UserStatus)
-			: undefined,
-		page: req.query.page ? Number(req.query.page) : 1,
-		limit: req.query.limit ? Number(req.query.limit) : 10,
-		sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-		sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc",
-	};
-
+	res.setHeader("Cache-Control", "private, no-store");
+	const filters = adminUsersQuerySchema.parse(req.query);
 	const result = await AdminService.getAllUsers(filters);
 
 	sendResponse(res, {
@@ -64,15 +50,8 @@ const getDashboardStats = catchAsync(async (_req: Request, res: Response) => {
 });
 
 const getAuditLogs = catchAsync(async (req: Request, res: Response) => {
-	const filters: IAuditLogFilterOptions = {
-		action: req.query.action ? String(req.query.action) : undefined,
-		resource: req.query.resource ? String(req.query.resource) : undefined,
-		page: req.query.page ? Number(req.query.page) : 1,
-		limit: req.query.limit ? Number(req.query.limit) : 20,
-		sortBy: req.query.sortBy ? String(req.query.sortBy) : "createdAt",
-		sortOrder: req.query.sortOrder === "asc" ? "asc" : "desc",
-	};
-
+	res.setHeader("Cache-Control", "private, no-store");
+	const filters = auditLogsQuerySchema.parse(req.query);
 	const result = await AdminService.getAuditLogs(filters);
 
 	sendResponse(res, {

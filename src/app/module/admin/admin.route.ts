@@ -8,12 +8,7 @@ import { AdminValidation } from "./admin.validation";
 const router = Router();
 
 // Endpoint 21: Paginated list of users with search and role filters
-router.get(
-	"/users",
-	auth(Role.ADMIN),
-	validateRequest(AdminValidation.userFilterValidationSchema),
-	AdminController.getAllUsers,
-);
+router.get("/users", auth(Role.ADMIN), AdminController.getAllUsers);
 
 // Endpoint 22: Update user status (ACTIVE / BLOCKED) with audit trail
 router.patch(
@@ -31,11 +26,6 @@ router.get(
 );
 
 // Endpoint 24: View system-wide compliance and activity audit logs
-router.get(
-	"/audit-logs",
-	auth(Role.ADMIN),
-	validateRequest(AdminValidation.auditLogFilterValidationSchema),
-	AdminController.getAuditLogs,
-);
+router.get("/audit-logs", auth(Role.ADMIN), AdminController.getAuditLogs);
 
 export const AdminRoutes = router;

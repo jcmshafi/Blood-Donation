@@ -10,23 +10,14 @@ import {
 import { prisma } from "../../lib/prisma";
 import { cache } from "../../lib/redis";
 import { AppError } from "../../utils/AppError";
+import type { AdminUsersQuery, AuditLogsQuery } from "./admin.query";
 import type {
-	IAdminUserFilterOptions,
-	IAuditLogFilterOptions,
 	IDashboardStats,
 	IUpdateUserStatusPayload,
 } from "./admin.interface";
 
-const getAllUsers = async (filters: IAdminUserFilterOptions) => {
-	const {
-		page = 1,
-		limit = 10,
-		role,
-		status,
-		searchTerm,
-		sortBy = "createdAt",
-		sortOrder = "desc",
-	} = filters;
+const getAllUsers = async (filters: AdminUsersQuery) => {
+	const { page, limit, role, status, searchTerm, sortBy, sortOrder } = filters;
 
 	const andConditions: Prisma.UserWhereInput[] = [{ isDeleted: false }];
 
@@ -51,8 +42,8 @@ const getAllUsers = async (filters: IAdminUserFilterOptions) => {
 
 	const where: Prisma.UserWhereInput = { AND: andConditions };
 
-	const parsedPage = Number(page) > 0 ? Number(page) : 1;
-	const parsedLimit = Number(limit) > 0 ? Number(limit) : 10;
+	const parsedPage = page;
+	const parsedLimit = limit;
 	const skip = (parsedPage - 1) * parsedLimit;
 
 	const [total, result] = await Promise.all([
@@ -61,9 +52,8 @@ const getAllUsers = async (filters: IAdminUserFilterOptions) => {
 			where,
 			skip,
 			take: parsedLimit,
-			orderBy: {
-				[sortBy]: sortOrder === "asc" ? "asc" : "desc",
-			},
+			// sortBy is allow-listed; id keeps pages stable when values tie.
+			orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
 			omit: {
 				password: true,
 			},
@@ -97,7 +87,10 @@ const updateUserStatus = async (
 	});
 
 	if (!targetUser) {
-		throw new AppError(httpStatus.NOT_FOUND, "Target user not found or deleted");
+		throw new AppError(
+			httpStatus.NOT_FOUND,
+			"Target user not found or deleted",
+		);
 	}
 
 	if (adminUserId === targetUserId && payload.status === UserStatus.BLOCKED) {
@@ -243,15 +236,8 @@ const getDashboardStats = async (): Promise<IDashboardStats> => {
 	return statsResult;
 };
 
-const getAuditLogs = async (filters: IAuditLogFilterOptions) => {
-	const {
-		page = 1,
-		limit = 20,
-		action,
-		resource,
-		sortBy = "createdAt",
-		sortOrder = "desc",
-	} = filters;
+const getAuditLogs = async (filters: AuditLogsQuery) => {
+	const { page, limit, action, resource, sortBy, sortOrder } = filters;
 
 	const andConditions: Prisma.AuditLogWhereInput[] = [];
 
@@ -270,8 +256,8 @@ const getAuditLogs = async (filters: IAuditLogFilterOptions) => {
 	const where: Prisma.AuditLogWhereInput =
 		andConditions.length > 0 ? { AND: andConditions } : {};
 
-	const parsedPage = Number(page) > 0 ? Number(page) : 1;
-	const parsedLimit = Number(limit) > 0 ? Number(limit) : 20;
+	const parsedPage = page;
+	const parsedLimit = limit;
 	const skip = (parsedPage - 1) * parsedLimit;
 
 	const [total, result] = await Promise.all([
@@ -280,9 +266,7 @@ const getAuditLogs = async (filters: IAuditLogFilterOptions) => {
 			where,
 			skip,
 			take: parsedLimit,
-			orderBy: {
-				[sortBy]: sortOrder === "asc" ? "asc" : "desc",
-			},
+			orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
 			include: {
 				user: {
 					select: {
