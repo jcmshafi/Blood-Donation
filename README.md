@@ -252,7 +252,7 @@ Generates production-bundled standalone files in the `dist/` folder:
 ### 💳 bKash Logistics Payments (`/api/v1/payments`)
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
-| `POST` | `/api/v1/payments/bkash/create` | `RECIPIENT`, `ADMIN` | Initiate bKash Tokenized Checkout payment |
+| `POST` | `/api/v1/payments/bkash/create` | `RECIPIENT`, `ADMIN` | Initiate bKash Tokenized Checkout payment (requires `Idempotency-Key` header; see PAYMENT_BKASH_INIT.md) |
 | `POST` | `/api/v1/payments/bkash/callback` | Public / Gateway | Handle bKash checkout webhook & execute |
 | `GET` | `/api/v1/payments/:id` | Payer / `ADMIN` | Retrieve payment transaction receipt |
 

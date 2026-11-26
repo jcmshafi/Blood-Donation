@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import httpStatus from "http-status";
 import {
 	PaymentMethod,
@@ -8,26 +9,87 @@ import {
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
 import { paymentReceiptEmailHtml, sendEmail } from "../../utils/sendEmail";
-import { BkashClient } from "./bkash.client";
+import { formatMinor } from "../../utils/money";
+import { BkashClient, isBkashConfigured } from "./bkash.client";
 import type {
 	IBkashCallbackPayload,
 	ICreatePaymentPayload,
 } from "./payment.interface";
 
+const RACE_ERROR_CODE = "P2002";
+
+type PaymentSummarySource = {
+	id: string;
+	requestId: string;
+	status: PaymentStatus;
+	paymentMethod: PaymentMethod;
+	currency: string;
+	amountMinor: number;
+	paymentId: string;
+	createdAt: Date;
+};
+
+const toPaymentSummary = (payment: PaymentSummarySource) => ({
+	id: payment.id,
+	requestId: payment.requestId,
+	status: payment.status,
+	paymentMethod: payment.paymentMethod,
+	currency: payment.currency,
+	amount: formatMinor(payment.amountMinor),
+	paymentId: payment.paymentId,
+	createdAt: payment.createdAt,
+});
+
+const fingerprintOf = (requestId: string, amountMinor: number) =>
+	createHash("sha256").update(`${requestId}|${amountMinor}`).digest("hex");
+
+/**
+ * Starts a bKash checkout. The pending attempt is stored before the gateway is
+ * contacted; a repeated Idempotency-Key replays the stored attempt.
+ */
 const initiateBkashPayment = async (
 	payerId: string,
 	payload: ICreatePaymentPayload,
+	idempotencyKey: string,
 	ipAddress?: string,
 ) => {
-	// Verify target blood request exists
+	const fingerprint = fingerprintOf(payload.requestId, payload.amountMinor);
+
+	const replay = async () => {
+		const existing = await prisma.payment.findUnique({
+			where: { payerId_idempotencyKey: { payerId, idempotencyKey } },
+		});
+		if (!existing) return null;
+		if (existing.initiationFingerprint !== fingerprint) {
+			throw new AppError(
+				httpStatus.UNPROCESSABLE_ENTITY,
+				"This Idempotency-Key was already used with a different request or amount",
+			);
+		}
+		return {
+			replayed: true as const,
+			payment: toPaymentSummary(existing),
+			bkashURL:
+				existing.status === PaymentStatus.PENDING ? existing.checkoutUrl : null,
+		};
+	};
+
+	const replayed = await replay();
+	if (replayed) return replayed;
+
+	if (!isBkashConfigured()) {
+		throw new AppError(
+			httpStatus.SERVICE_UNAVAILABLE,
+			"Payments are temporarily unavailable",
+		);
+	}
+
 	const bloodRequest = await prisma.bloodRequest.findUnique({
 		where: { id: payload.requestId, isDeleted: false },
 	});
-
 	if (!bloodRequest) {
 		throw new AppError(httpStatus.NOT_FOUND, "Blood request not found");
 	}
-
 	if (bloodRequest.status === RequestStatus.CANCELLED) {
 		throw new AppError(
 			httpStatus.BAD_REQUEST,
@@ -35,73 +97,99 @@ const initiateBkashPayment = async (
 		);
 	}
 
-	const invoiceNumber = `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
 	const payer = await prisma.user.findUnique({
 		where: { id: payerId },
 		select: { phone: true },
 	});
-	const cleanPhone = payer?.phone?.replace(/\D/g, "") || "01770618575";
-	const payerReference = cleanPhone.length === 11 ? cleanPhone : "01770618575";
+	const cleanPhone = payer?.phone?.replace(/\D/g, "") || "";
+	const payerReference = cleanPhone.length === 11 ? cleanPhone : "01700000000";
 
-	// Initiate payment through bKash Tokenized Checkout API
-	const bkashResponse = await BkashClient.createPayment({
-		amount: payload.amount,
-		invoiceNumber,
-		payerReference,
-	});
+	const invoiceNumber = `INV-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
-	// Persist payment record with PENDING status
-	const payment = await prisma.payment.create({
-		data: {
-			requestId: payload.requestId,
-			payerId,
-			amount: payload.amount,
-			paymentMethod: PaymentMethod.BKASH,
-			paymentId: bkashResponse.paymentID,
-			status: PaymentStatus.PENDING,
-		},
-		include: {
-			request: {
-				select: {
-					id: true,
-					patientName: true,
-					bloodGroup: true,
-					hospitalName: true,
-				},
+	// Persist the attempt first. paymentId is replaced by bKash's paymentID once known.
+	let attempt: Awaited<ReturnType<typeof prisma.payment.create>>;
+	try {
+		attempt = await prisma.payment.create({
+			data: {
+				requestId: payload.requestId,
+				payerId,
+				amount: payload.amountMinor / 100,
+				amountMinor: payload.amountMinor,
+				currency: "BDT",
+				paymentMethod: PaymentMethod.BKASH,
+				paymentId: `PENDING-${randomBytes(16).toString("hex")}`,
+				merchantInvoiceNumber: invoiceNumber,
+				idempotencyKey,
+				initiationFingerprint: fingerprint,
+				status: PaymentStatus.PENDING,
 			},
-			payer: {
-				select: {
-					id: true,
-					name: true,
-					email: true,
-					phone: true,
-				},
-			},
-		},
-	});
+		});
+	} catch (error) {
+		if ((error as { code?: string }).code === RACE_ERROR_CODE) {
+			const raced = await replay();
+			if (raced) return raced;
+		}
+		throw error;
+	}
 
-	// Record audit log entry
 	await prisma.auditLog.create({
 		data: {
 			userId: payerId,
 			action: "PAYMENT_INITIATED",
 			resource: "Payment",
-			resourceId: payment.id,
+			resourceId: attempt.id,
 			details: {
-				paymentId: payment.paymentId,
-				amount: payment.amount,
-				requestId: payment.requestId,
-				merchantInvoiceNumber: bkashResponse.merchantInvoiceNumber,
+				provider: "BKASH",
+				amountMinor: attempt.amountMinor,
+				currency: attempt.currency,
+				requestId: attempt.requestId,
+				merchantInvoiceNumber: invoiceNumber,
 			},
 			ipAddress,
 		},
 	});
 
-	return {
-		payment,
-		bkashURL: bkashResponse.bkashURL,
-	};
+	try {
+		const bkashResponse = await BkashClient.createPayment({
+			amount: formatMinor(payload.amountMinor),
+			invoiceNumber,
+			payerReference,
+		});
+		const updated = await prisma.payment.update({
+			where: { id: attempt.id },
+			data: {
+				paymentId: bkashResponse.paymentID,
+				checkoutUrl: bkashResponse.bkashURL,
+			},
+		});
+		return {
+			replayed: false as const,
+			payment: toPaymentSummary(updated),
+			bkashURL: bkashResponse.bkashURL as string | null,
+		};
+	} catch {
+		await prisma.payment.update({
+			where: { id: attempt.id },
+			data: {
+				status: PaymentStatus.FAILED,
+				failureReason: "Gateway could not create a checkout session",
+			},
+		});
+		await prisma.auditLog.create({
+			data: {
+				userId: payerId,
+				action: "PAYMENT_FAILED",
+				resource: "Payment",
+				resourceId: attempt.id,
+				details: { stage: "initiation", reason: "gateway_error" },
+				ipAddress,
+			},
+		});
+		throw new AppError(
+			httpStatus.BAD_GATEWAY,
+			"The payment gateway could not start checkout. Please try again.",
+		);
+	}
 };
 
 const handleBkashCallback = async (
@@ -170,7 +258,15 @@ const handleBkashCallback = async (
 	}
 
 	// Execute payment through bKash Tokenized Checkout
-	const executeResponse = await BkashClient.executePayment(payload.paymentID);
+	let executeResponse: Awaited<ReturnType<typeof BkashClient.executePayment>>;
+	try {
+		executeResponse = await BkashClient.executePayment(payload.paymentID);
+	} catch {
+		throw new AppError(
+			httpStatus.BAD_GATEWAY,
+			"bKash could not confirm this payment yet",
+		);
+	}
 
 	// Atomically complete the payment record
 	const completedPayment = await prisma.payment.update({
@@ -243,6 +339,11 @@ const getPaymentById = async (
 	const payment = await prisma.payment.findFirst({
 		where: {
 			OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }],
+		},
+		omit: {
+			idempotencyKey: true,
+			initiationFingerprint: true,
+			checkoutUrl: true,
 		},
 		include: {
 			request: {

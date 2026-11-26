@@ -1,7 +1,4 @@
-import crypto from "crypto";
-import httpStatus from "http-status";
 import config from "../../config/index";
-import { AppError } from "../../utils/AppError";
 import type {
 	IBkashCreatePaymentResponse,
 	IBkashExecutePaymentResponse,
@@ -9,224 +6,171 @@ import type {
 	IBkashQueryPaymentResponse,
 } from "./payment.interface";
 
+const REQUEST_TIMEOUT_MS = 15_000;
+const SUCCESS_CODE = "0000";
+
+/** Gateway-side failure. The message is internal; callers show a generic one. */
+export class BkashGatewayError extends Error {}
+
+export const isBkashConfigured = (): boolean =>
+	Boolean(
+		config.bkash_app_key &&
+			config.bkash_app_secret &&
+			config.bkash_username &&
+			config.bkash_password &&
+			config.bkash_base_url &&
+			config.bkash_callback_url,
+	);
+
+/** The checkout URL we hand to the browser must point at bKash (or the configured gateway host). */
+export const isTrustedCheckoutUrl = (value: string): boolean => {
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+		const host = url.hostname.toLowerCase();
+		let configuredHost = "";
+		try {
+			configuredHost = new URL(
+				config.bkash_base_url as string,
+			).hostname.toLowerCase();
+		} catch {
+			// no configured host
+		}
+		if (configuredHost && host === configuredHost) return true;
+		if (url.protocol !== "https:") return false;
+		return (
+			host === "bka.sh" ||
+			host.endsWith(".bka.sh") ||
+			host === "bkash.com" ||
+			host.endsWith(".bkash.com")
+		);
+	} catch {
+		return false;
+	}
+};
+
 class BkashClientService {
 	private idToken: string | null = null;
 	private tokenExpiresAt = 0;
 
-	/**
-	 * Retrieves a valid bKash id_token, using cached token if not expired.
-	 */
+	private async post<T>(
+		path: string,
+		init: { headers: Record<string, string>; body: unknown },
+	): Promise<T> {
+		let response: Response;
+		try {
+			response = await fetch(`${config.bkash_base_url}${path}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", ...init.headers },
+				body: JSON.stringify(init.body),
+				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			});
+		} catch {
+			throw new BkashGatewayError("bKash gateway unreachable");
+		}
+		if (!response.ok)
+			throw new BkashGatewayError(
+				`bKash gateway returned HTTP ${response.status}`,
+			);
+		try {
+			return (await response.json()) as T;
+		} catch {
+			throw new BkashGatewayError("bKash gateway returned a non-JSON response");
+		}
+	}
+
+	/** Retrieves a valid bKash id_token, reusing the cached one until shortly before expiry. */
 	public async getValidToken(): Promise<string> {
 		const now = Date.now();
-		// If valid token in memory with at least 60s remaining buffer, reuse it
-		if (this.idToken && now < this.tokenExpiresAt - 60_000) {
-			return this.idToken;
-		}
+		if (this.idToken && now < this.tokenExpiresAt - 60_000) return this.idToken;
 
-		try {
-			const response = await fetch(
-				`${config.bkash_base_url}/tokenized/checkout/token/grant`,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						username: config.bkash_username,
-						password: config.bkash_password,
-					},
-					body: JSON.stringify({
-						app_key: config.bkash_app_key,
-						app_secret: config.bkash_app_secret,
-					}),
+		const data = await this.post<IBkashGrantTokenResponse>(
+			"/tokenized/checkout/token/grant",
+			{
+				headers: {
+					username: config.bkash_username as string,
+					password: config.bkash_password as string,
 				},
-			);
-
-			if (response.ok) {
-				const text = await response.text();
-				try {
-					const data = JSON.parse(text) as IBkashGrantTokenResponse;
-					if (data.id_token) {
-						this.idToken = data.id_token;
-						this.tokenExpiresAt = now + (data.expires_in || 3600) * 1000;
-						return this.idToken;
-					}
-				} catch {
-					// Gateway returned non-JSON
-				}
-			}
-		} catch {
-			// Fall through to resilient fallback if sandbox is unreachable
-		}
-
-		// Resilient sandbox simulation fallback token
-		const mockToken = `bkash_token_${crypto.randomBytes(16).toString("hex")}`;
-		this.idToken = mockToken;
-		this.tokenExpiresAt = now + 3600 * 1000;
+				body: {
+					app_key: config.bkash_app_key,
+					app_secret: config.bkash_app_secret,
+				},
+			},
+		);
+		if (!data.id_token)
+			throw new BkashGatewayError("bKash token grant was rejected");
+		this.idToken = data.id_token;
+		this.tokenExpiresAt = now + (data.expires_in || 3600) * 1000;
 		return this.idToken;
 	}
 
-	/**
-	 * Initiates a tokenized payment request on bKash.
-	 */
+	private async authorizedPost<T>(path: string, body: unknown): Promise<T> {
+		const token = await this.getValidToken();
+		return this.post<T>(path, {
+			headers: {
+				Authorization: token,
+				"X-APP-Key": config.bkash_app_key as string,
+			},
+			body,
+		});
+	}
+
+	/** Creates a tokenized checkout. `amount` is a two-decimal BDT string such as "150.50". */
 	public async createPayment(params: {
-		amount: number;
+		amount: string;
 		invoiceNumber: string;
 		payerReference?: string;
 	}): Promise<IBkashCreatePaymentResponse> {
-		const token = await this.getValidToken();
-
-		try {
-			const response = await fetch(
-				`${config.bkash_base_url}/tokenized/checkout/create`,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Authorization: token,
-						"X-APP-Key": config.bkash_app_key,
-					},
-					body: JSON.stringify({
-						mode: "0011",
-						payerReference: params.payerReference || "01700000000",
-						callbackURL: config.bkash_callback_url,
-						amount: params.amount.toFixed(2),
-						currency: "BDT",
-						intent: "sale",
-						merchantInvoiceNumber: params.invoiceNumber,
-					}),
-				},
-			);
-
-			if (response.ok) {
-				const text = await response.text();
-				try {
-					const data = JSON.parse(text) as IBkashCreatePaymentResponse;
-					if (data.paymentID && data.bkashURL) {
-						return data;
-					}
-				} catch {
-					// Gateway returned non-JSON
-				}
-			}
-		} catch {
-			// Fall through to fallback
+		const data = await this.authorizedPost<IBkashCreatePaymentResponse>(
+			"/tokenized/checkout/create",
+			{
+				mode: "0011",
+				payerReference: params.payerReference || "01700000000",
+				callbackURL: config.bkash_callback_url,
+				amount: params.amount,
+				currency: "BDT",
+				intent: "sale",
+				merchantInvoiceNumber: params.invoiceNumber,
+			},
+		);
+		if (data.statusCode !== SUCCESS_CODE || !data.paymentID || !data.bkashURL) {
+			throw new BkashGatewayError("bKash declined the checkout request");
 		}
-
-		// Resilient fallback mock response with exact bKash checkout schema
-		const paymentID = `BKASH_${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
-		return {
-			statusCode: "0000",
-			statusMessage: "Successful",
-			paymentID,
-			bkashURL: `https://sandbox.payment.bka.sh/redirect/tokenized/?paymentID=${paymentID}`,
-			amount: params.amount.toFixed(2),
-			currency: "BDT",
-			paymentCreateTime: new Date().toISOString(),
-			transactionStatus: "Initiated",
-			merchantInvoiceNumber: params.invoiceNumber,
-		};
+		if (!isTrustedCheckoutUrl(data.bkashURL)) {
+			throw new BkashGatewayError("bKash returned an untrusted checkout URL");
+		}
+		return data;
 	}
 
-	/**
-	 * Executes an initiated payment on bKash.
-	 */
+	/** Executes an initiated payment. Throws on any gateway failure; never fabricates success. */
 	public async executePayment(
 		paymentID: string,
 	): Promise<IBkashExecutePaymentResponse> {
-		const token = await this.getValidToken();
-
-		try {
-			const response = await fetch(
-				`${config.bkash_base_url}/tokenized/checkout/execute`,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Authorization: token,
-						"X-APP-Key": config.bkash_app_key,
-					},
-					body: JSON.stringify({
-						paymentID,
-					}),
-				},
-			);
-
-			if (response.ok) {
-				const text = await response.text();
-				try {
-					const data = JSON.parse(text) as IBkashExecutePaymentResponse;
-					if (data.trxID) {
-						return data;
-					}
-				} catch {
-					// Gateway returned non-JSON
-				}
-			}
-		} catch {
-			// Fall through to fallback
+		const data = await this.authorizedPost<IBkashExecutePaymentResponse>(
+			"/tokenized/checkout/execute",
+			{
+				paymentID,
+			},
+		);
+		if (data.statusCode !== SUCCESS_CODE || !data.trxID) {
+			throw new BkashGatewayError("bKash did not confirm the payment");
 		}
-
-		// Resilient fallback mock response
-		const trxID = `TRX${crypto.randomBytes(5).toString("hex").toUpperCase()}`;
-		return {
-			statusCode: "0000",
-			statusMessage: "Successful",
-			paymentID,
-			trxID,
-			transactionStatus: "Completed",
-			amount: "100.00",
-			currency: "BDT",
-			intent: "sale",
-			paymentExecuteTime: new Date().toISOString(),
-			merchantInvoiceNumber: `INV_${paymentID}`,
-			customerMsisdn: "01700000000",
-		};
+		return data;
 	}
 
-	/**
-	 * Queries payment transaction status from bKash.
-	 */
+	/** Queries payment status from bKash. Throws on any gateway failure. */
 	public async queryPayment(
 		paymentID: string,
 	): Promise<IBkashQueryPaymentResponse> {
-		const token = await this.getValidToken();
-
-		try {
-			const response = await fetch(
-				`${config.bkash_base_url}/tokenized/checkout/payment/status`,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Authorization: token,
-						"X-APP-Key": config.bkash_app_key,
-					},
-					body: JSON.stringify({
-						paymentID,
-					}),
-				},
-			);
-
-			if (response.ok) {
-				const text = await response.text();
-				try {
-					const data = JSON.parse(text) as IBkashQueryPaymentResponse;
-					return data;
-				} catch {
-					// Gateway returned non-JSON
-				}
-			}
-		} catch {
-			// Fall through to fallback
-		}
-
-		return {
-			statusCode: "0000",
-			statusMessage: "Successful",
-			paymentID,
-			transactionStatus: "Completed",
-			amount: "100.00",
-			currency: "BDT",
-		};
+		const data = await this.authorizedPost<IBkashQueryPaymentResponse>(
+			"/tokenized/checkout/payment/status",
+			{
+				paymentID,
+			},
+		);
+		if (!data.transactionStatus)
+			throw new BkashGatewayError("bKash status response was incomplete");
+		return data;
 	}
 }
 

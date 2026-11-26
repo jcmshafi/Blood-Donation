@@ -4,15 +4,24 @@ model Payment {
   request                BloodRequest  @relation(fields: [requestId], references: [id], onDelete: Restrict)
   payerId                String
   payer                  User          @relation(fields: [payerId], references: [id], onDelete: Restrict)
-  amount                 Float
+  amount                 Float         // legacy float, kept readable; amountMinor is authoritative
+  amountMinor            Int           // exact amount in poisha (150.50 BDT = 15050)
+  currency               String        @default("BDT")
   paymentMethod          PaymentMethod @default(BKASH)
   paymentId              String        @unique // bKash paymentID
   transactionId          String?       // bKash trxID
   status                 PaymentStatus @default(PENDING)
   paymentExecuteResponse Json?
+  merchantInvoiceNumber  String?       @unique
+  checkoutUrl            String?
+  idempotencyKey         String?
+  initiationFingerprint  String?
+  failureReason          String?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
+  @@unique([payerId, idempotencyKey])
+  @@index([requestId])
   @@index([status, paymentId])
   @@map("payments")
 }

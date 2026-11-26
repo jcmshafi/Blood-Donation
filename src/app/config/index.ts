@@ -18,12 +18,11 @@ export default {
 		"default_jwt_refresh_secret_for_emergency_platform",
 	jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
 	jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-	bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdadl1eqq",
-	bkash_app_secret:
-		process.env.BKASH_APP_SECRET ||
-		"2is7hdktrekvrbljjh44ll3d9l1dtjo4pasmjvs5vl5qr3fug4b",
-	bkash_username: process.env.BKASH_USERNAME || "sandboxTokenizedUser02",
-	bkash_password: process.env.BKASH_PASSWORD || "sandboxTokenizedUser02@12345",
+	// bKash credentials have no defaults: initiation answers 503 until they are set.
+	bkash_app_key: process.env.BKASH_APP_KEY || "",
+	bkash_app_secret: process.env.BKASH_APP_SECRET || "",
+	bkash_username: process.env.BKASH_USERNAME || "",
+	bkash_password: process.env.BKASH_PASSWORD || "",
 	bkash_base_url:
 		process.env.BKASH_BASE_URL ||
 		"https://tokenized.sandbox.bka.sh/v1.2.0-beta",

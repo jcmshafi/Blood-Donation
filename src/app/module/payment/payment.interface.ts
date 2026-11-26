@@ -5,7 +5,7 @@ import type {
 
 export interface ICreatePaymentPayload {
 	requestId: string;
-	amount: number;
+	amountMinor: number; // poisha, validated by the schema
 }
 
 export interface IBkashCallbackPayload {

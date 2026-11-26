@@ -30,10 +30,11 @@ var config_default = {
   jwt_refresh_secret: process.env.JWT_REFRESH_SECRET || "default_jwt_refresh_secret_for_emergency_platform",
   jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
   jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-  bkash_app_key: process.env.BKASH_APP_KEY || "4f6o0cjiki2rfm34kfdadl1eqq",
-  bkash_app_secret: process.env.BKASH_APP_SECRET || "2is7hdktrekvrbljjh44ll3d9l1dtjo4pasmjvs5vl5qr3fug4b",
-  bkash_username: process.env.BKASH_USERNAME || "sandboxTokenizedUser02",
-  bkash_password: process.env.BKASH_PASSWORD || "sandboxTokenizedUser02@12345",
+  // bKash credentials have no defaults: initiation answers 503 until they are set.
+  bkash_app_key: process.env.BKASH_APP_KEY || "",
+  bkash_app_secret: process.env.BKASH_APP_SECRET || "",
+  bkash_username: process.env.BKASH_USERNAME || "",
+  bkash_password: process.env.BKASH_PASSWORD || "",
   bkash_base_url: process.env.BKASH_BASE_URL || "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
   bkash_callback_url: process.env.BKASH_CALLBACK_URL || "http://localhost:5000/api/v1/payments/bkash/callback",
   google_client_id: process.env.GOOGLE_CLIENT_ID,
@@ -56,7 +57,7 @@ var config = {
   "clientVersion": "7.10.0",
   "engineVersion": "0edf323efd1d98336f3f0a68684b56f689b900d3",
   "activeProvider": "postgresql",
-  "inlineSchema": 'model BloodRequest {\n  id              String        @id @default(uuid())\n  requesterId     String\n  requester       User          @relation(fields: [requesterId], references: [id], onDelete: Restrict)\n  patientName     String\n  bloodGroup      BloodGroup\n  unitsNeeded     Int           @default(1)\n  unitsFulfilled  Int           @default(0)\n  hospitalName    String\n  hospitalAddress String\n  latitude        Float\n  longitude       Float\n  contactNumber   String\n  urgency         UrgencyLevel  @default(NORMAL)\n  status          RequestStatus @default(OPEN)\n  notes           String?\n  isDeleted       Boolean       @default(false)\n  deletedAt       DateTime?\n  createdAt       DateTime      @default(now())\n  updatedAt       DateTime      @updatedAt\n\n  assignments DonationAssignment[]\n  payments    Payment[]\n\n  @@index([bloodGroup, urgency, status])\n  @@index([isDeleted, deletedAt])\n  @@index([createdAt])\n  @@map("blood_requests")\n}\n\nmodel DonationAssignment {\n  id          String         @id @default(uuid())\n  requestId   String\n  request     BloodRequest   @relation(fields: [requestId], references: [id], onDelete: Restrict)\n  donorId     String\n  donor       User           @relation(fields: [donorId], references: [id], onDelete: Restrict)\n  status      DonationStatus @default(ASSIGNED)\n  notes       String?\n  completedAt DateTime?\n  createdAt   DateTime       @default(now())\n  updatedAt   DateTime       @updatedAt\n\n  @@unique([requestId, donorId])\n  @@index([status])\n  @@map("donation_assignments")\n}\n\nenum Role {\n  DONOR\n  RECIPIENT\n  ADMIN\n}\n\nenum UserStatus {\n  ACTIVE\n  BLOCKED\n}\n\nenum BloodGroup {\n  A_POSITIVE\n  A_NEGATIVE\n  B_POSITIVE\n  B_NEGATIVE\n  AB_POSITIVE\n  AB_NEGATIVE\n  O_POSITIVE\n  O_NEGATIVE\n}\n\nenum UrgencyLevel {\n  NORMAL\n  URGENT\n  CRITICAL\n}\n\nenum RequestStatus {\n  OPEN\n  MATCHED\n  FULFILLED\n  CANCELLED\n}\n\nenum DonationStatus {\n  ASSIGNED\n  COMPLETED\n  CANCELLED\n}\n\nenum PaymentStatus {\n  PENDING\n  COMPLETED\n  FAILED\n  CANCELLED\n}\n\nenum PaymentMethod {\n  BKASH\n}\n\n// Obsolete model removed.\n\nmodel Payment {\n  id                     String        @id @default(uuid())\n  requestId              String\n  request                BloodRequest  @relation(fields: [requestId], references: [id], onDelete: Restrict)\n  payerId                String\n  payer                  User          @relation(fields: [payerId], references: [id], onDelete: Restrict)\n  amount                 Float\n  paymentMethod          PaymentMethod @default(BKASH)\n  paymentId              String        @unique // bKash paymentID\n  transactionId          String? // bKash trxID\n  status                 PaymentStatus @default(PENDING)\n  paymentExecuteResponse Json?\n  createdAt              DateTime      @default(now())\n  updatedAt              DateTime      @updatedAt\n\n  @@index([status, paymentId])\n  @@map("payments")\n}\n\nmodel AuditLog {\n  id         String   @id @default(uuid())\n  userId     String?\n  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)\n  action     String\n  resource   String\n  resourceId String?\n  details    Json?\n  ipAddress  String?\n  createdAt  DateTime @default(now())\n\n  @@index([action, resource])\n  @@index([createdAt])\n  @@map("audit_logs")\n}\n\n// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\n// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?\n// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init\n\ngenerator client {\n  provider = "prisma-client"\n  output   = "../../src/generated/prisma"\n}\n\ndatasource db {\n  provider = "postgresql"\n}\n\nmodel User {\n  id        String     @id @default(uuid())\n  name      String\n  email     String     @unique\n  password  String?\n  role      Role       @default(RECIPIENT)\n  status    UserStatus @default(ACTIVE)\n  googleId  String?    @unique\n  phone     String?\n  address   String?\n  isDeleted Boolean    @default(false)\n  deletedAt DateTime?\n  createdAt DateTime   @default(now())\n  updatedAt DateTime   @updatedAt\n\n  donorProfile  DonorProfile?\n  bloodRequests BloodRequest[]\n  assignments   DonationAssignment[]\n  payments      Payment[]\n  auditLogs     AuditLog[]\n\n  @@index([email, role, status])\n  @@index([isDeleted])\n  @@map("users")\n}\n\nmodel DonorProfile {\n  id               String      @id @default(uuid())\n  userId           String      @unique\n  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)\n  bloodGroup       BloodGroup?\n  isAvailable      Boolean     @default(true)\n  lastDonationDate DateTime?\n  totalDonations   Int         @default(0)\n  phone            String?\n  address          String?\n  latitude         Float?\n  longitude        Float?\n  createdAt        DateTime    @default(now())\n  updatedAt        DateTime    @updatedAt\n\n  @@index([bloodGroup, isAvailable])\n  @@index([lastDonationDate])\n  @@map("donor_profiles")\n}\n',
+  "inlineSchema": 'model BloodRequest {\n  id              String        @id @default(uuid())\n  requesterId     String\n  requester       User          @relation(fields: [requesterId], references: [id], onDelete: Restrict)\n  patientName     String\n  bloodGroup      BloodGroup\n  unitsNeeded     Int           @default(1)\n  unitsFulfilled  Int           @default(0)\n  hospitalName    String\n  hospitalAddress String\n  latitude        Float\n  longitude       Float\n  contactNumber   String\n  urgency         UrgencyLevel  @default(NORMAL)\n  status          RequestStatus @default(OPEN)\n  notes           String?\n  isDeleted       Boolean       @default(false)\n  deletedAt       DateTime?\n  createdAt       DateTime      @default(now())\n  updatedAt       DateTime      @updatedAt\n\n  assignments DonationAssignment[]\n  payments    Payment[]\n\n  @@index([bloodGroup, urgency, status])\n  @@index([isDeleted, deletedAt])\n  @@index([createdAt])\n  @@map("blood_requests")\n}\n\nmodel DonationAssignment {\n  id          String         @id @default(uuid())\n  requestId   String\n  request     BloodRequest   @relation(fields: [requestId], references: [id], onDelete: Restrict)\n  donorId     String\n  donor       User           @relation(fields: [donorId], references: [id], onDelete: Restrict)\n  status      DonationStatus @default(ASSIGNED)\n  notes       String?\n  completedAt DateTime?\n  createdAt   DateTime       @default(now())\n  updatedAt   DateTime       @updatedAt\n\n  @@unique([requestId, donorId])\n  @@index([status])\n  @@map("donation_assignments")\n}\n\nenum Role {\n  DONOR\n  RECIPIENT\n  ADMIN\n}\n\nenum UserStatus {\n  ACTIVE\n  BLOCKED\n}\n\nenum BloodGroup {\n  A_POSITIVE\n  A_NEGATIVE\n  B_POSITIVE\n  B_NEGATIVE\n  AB_POSITIVE\n  AB_NEGATIVE\n  O_POSITIVE\n  O_NEGATIVE\n}\n\nenum UrgencyLevel {\n  NORMAL\n  URGENT\n  CRITICAL\n}\n\nenum RequestStatus {\n  OPEN\n  MATCHED\n  FULFILLED\n  CANCELLED\n}\n\nenum DonationStatus {\n  ASSIGNED\n  COMPLETED\n  CANCELLED\n}\n\nenum PaymentStatus {\n  PENDING\n  COMPLETED\n  FAILED\n  CANCELLED\n}\n\nenum PaymentMethod {\n  BKASH\n}\n\n// Obsolete model removed.\n\nmodel Payment {\n  id                     String        @id @default(uuid())\n  requestId              String\n  request                BloodRequest  @relation(fields: [requestId], references: [id], onDelete: Restrict)\n  payerId                String\n  payer                  User          @relation(fields: [payerId], references: [id], onDelete: Restrict)\n  amount                 Float // legacy float, kept readable; amountMinor is authoritative\n  amountMinor            Int // exact amount in poisha (150.50 BDT = 15050)\n  currency               String        @default("BDT")\n  paymentMethod          PaymentMethod @default(BKASH)\n  paymentId              String        @unique // bKash paymentID\n  transactionId          String? // bKash trxID\n  status                 PaymentStatus @default(PENDING)\n  paymentExecuteResponse Json?\n  merchantInvoiceNumber  String?       @unique\n  checkoutUrl            String?\n  idempotencyKey         String?\n  initiationFingerprint  String?\n  failureReason          String?\n  createdAt              DateTime      @default(now())\n  updatedAt              DateTime      @updatedAt\n\n  @@unique([payerId, idempotencyKey])\n  @@index([requestId])\n  @@index([status, paymentId])\n  @@map("payments")\n}\n\nmodel AuditLog {\n  id         String   @id @default(uuid())\n  userId     String?\n  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)\n  action     String\n  resource   String\n  resourceId String?\n  details    Json?\n  ipAddress  String?\n  createdAt  DateTime @default(now())\n\n  @@index([action, resource])\n  @@index([createdAt])\n  @@map("audit_logs")\n}\n\n// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\n// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?\n// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init\n\ngenerator client {\n  provider = "prisma-client"\n  output   = "../../src/generated/prisma"\n}\n\ndatasource db {\n  provider = "postgresql"\n}\n\nmodel User {\n  id        String     @id @default(uuid())\n  name      String\n  email     String     @unique\n  password  String?\n  role      Role       @default(RECIPIENT)\n  status    UserStatus @default(ACTIVE)\n  googleId  String?    @unique\n  phone     String?\n  address   String?\n  isDeleted Boolean    @default(false)\n  deletedAt DateTime?\n  createdAt DateTime   @default(now())\n  updatedAt DateTime   @updatedAt\n\n  donorProfile  DonorProfile?\n  bloodRequests BloodRequest[]\n  assignments   DonationAssignment[]\n  payments      Payment[]\n  auditLogs     AuditLog[]\n\n  @@index([email, role, status])\n  @@index([isDeleted])\n  @@map("users")\n}\n\nmodel DonorProfile {\n  id               String      @id @default(uuid())\n  userId           String      @unique\n  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)\n  bloodGroup       BloodGroup?\n  isAvailable      Boolean     @default(true)\n  lastDonationDate DateTime?\n  totalDonations   Int         @default(0)\n  phone            String?\n  address          String?\n  latitude         Float?\n  longitude        Float?\n  createdAt        DateTime    @default(now())\n  updatedAt        DateTime    @updatedAt\n\n  @@index([bloodGroup, isAvailable])\n  @@index([lastDonationDate])\n  @@map("donor_profiles")\n}\n',
   "runtimeDataModel": {
     "models": {},
     "enums": {},
@@ -67,10 +68,10 @@ var config = {
     "graph": ""
   }
 };
-config.runtimeDataModel = JSON.parse('{"models":{"BloodRequest":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requesterId","kind":"scalar","type":"String"},{"name":"requester","kind":"object","type":"User","relationName":"BloodRequestToUser"},{"name":"patientName","kind":"scalar","type":"String"},{"name":"bloodGroup","kind":"enum","type":"BloodGroup"},{"name":"unitsNeeded","kind":"scalar","type":"Int"},{"name":"unitsFulfilled","kind":"scalar","type":"Int"},{"name":"hospitalName","kind":"scalar","type":"String"},{"name":"hospitalAddress","kind":"scalar","type":"String"},{"name":"latitude","kind":"scalar","type":"Float"},{"name":"longitude","kind":"scalar","type":"Float"},{"name":"contactNumber","kind":"scalar","type":"String"},{"name":"urgency","kind":"enum","type":"UrgencyLevel"},{"name":"status","kind":"enum","type":"RequestStatus"},{"name":"notes","kind":"scalar","type":"String"},{"name":"isDeleted","kind":"scalar","type":"Boolean"},{"name":"deletedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"},{"name":"assignments","kind":"object","type":"DonationAssignment","relationName":"BloodRequestToDonationAssignment"},{"name":"payments","kind":"object","type":"Payment","relationName":"BloodRequestToPayment"}],"dbName":"blood_requests","schema":null},"DonationAssignment":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requestId","kind":"scalar","type":"String"},{"name":"request","kind":"object","type":"BloodRequest","relationName":"BloodRequestToDonationAssignment"},{"name":"donorId","kind":"scalar","type":"String"},{"name":"donor","kind":"object","type":"User","relationName":"DonationAssignmentToUser"},{"name":"status","kind":"enum","type":"DonationStatus"},{"name":"notes","kind":"scalar","type":"String"},{"name":"completedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"donation_assignments","schema":null},"Payment":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requestId","kind":"scalar","type":"String"},{"name":"request","kind":"object","type":"BloodRequest","relationName":"BloodRequestToPayment"},{"name":"payerId","kind":"scalar","type":"String"},{"name":"payer","kind":"object","type":"User","relationName":"PaymentToUser"},{"name":"amount","kind":"scalar","type":"Float"},{"name":"paymentMethod","kind":"enum","type":"PaymentMethod"},{"name":"paymentId","kind":"scalar","type":"String"},{"name":"transactionId","kind":"scalar","type":"String"},{"name":"status","kind":"enum","type":"PaymentStatus"},{"name":"paymentExecuteResponse","kind":"scalar","type":"Json"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"payments","schema":null},"AuditLog":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"userId","kind":"scalar","type":"String"},{"name":"user","kind":"object","type":"User","relationName":"AuditLogToUser"},{"name":"action","kind":"scalar","type":"String"},{"name":"resource","kind":"scalar","type":"String"},{"name":"resourceId","kind":"scalar","type":"String"},{"name":"details","kind":"scalar","type":"Json"},{"name":"ipAddress","kind":"scalar","type":"String"},{"name":"createdAt","kind":"scalar","type":"DateTime"}],"dbName":"audit_logs","schema":null},"User":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"name","kind":"scalar","type":"String"},{"name":"email","kind":"scalar","type":"String"},{"name":"password","kind":"scalar","type":"String"},{"name":"role","kind":"enum","type":"Role"},{"name":"status","kind":"enum","type":"UserStatus"},{"name":"googleId","kind":"scalar","type":"String"},{"name":"phone","kind":"scalar","type":"String"},{"name":"address","kind":"scalar","type":"String"},{"name":"isDeleted","kind":"scalar","type":"Boolean"},{"name":"deletedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"},{"name":"donorProfile","kind":"object","type":"DonorProfile","relationName":"DonorProfileToUser"},{"name":"bloodRequests","kind":"object","type":"BloodRequest","relationName":"BloodRequestToUser"},{"name":"assignments","kind":"object","type":"DonationAssignment","relationName":"DonationAssignmentToUser"},{"name":"payments","kind":"object","type":"Payment","relationName":"PaymentToUser"},{"name":"auditLogs","kind":"object","type":"AuditLog","relationName":"AuditLogToUser"}],"dbName":"users","schema":null},"DonorProfile":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"userId","kind":"scalar","type":"String"},{"name":"user","kind":"object","type":"User","relationName":"DonorProfileToUser"},{"name":"bloodGroup","kind":"enum","type":"BloodGroup"},{"name":"isAvailable","kind":"scalar","type":"Boolean"},{"name":"lastDonationDate","kind":"scalar","type":"DateTime"},{"name":"totalDonations","kind":"scalar","type":"Int"},{"name":"phone","kind":"scalar","type":"String"},{"name":"address","kind":"scalar","type":"String"},{"name":"latitude","kind":"scalar","type":"Float"},{"name":"longitude","kind":"scalar","type":"Float"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"donor_profiles","schema":null}},"enums":{},"types":{}}');
+config.runtimeDataModel = JSON.parse('{"models":{"BloodRequest":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requesterId","kind":"scalar","type":"String"},{"name":"requester","kind":"object","type":"User","relationName":"BloodRequestToUser"},{"name":"patientName","kind":"scalar","type":"String"},{"name":"bloodGroup","kind":"enum","type":"BloodGroup"},{"name":"unitsNeeded","kind":"scalar","type":"Int"},{"name":"unitsFulfilled","kind":"scalar","type":"Int"},{"name":"hospitalName","kind":"scalar","type":"String"},{"name":"hospitalAddress","kind":"scalar","type":"String"},{"name":"latitude","kind":"scalar","type":"Float"},{"name":"longitude","kind":"scalar","type":"Float"},{"name":"contactNumber","kind":"scalar","type":"String"},{"name":"urgency","kind":"enum","type":"UrgencyLevel"},{"name":"status","kind":"enum","type":"RequestStatus"},{"name":"notes","kind":"scalar","type":"String"},{"name":"isDeleted","kind":"scalar","type":"Boolean"},{"name":"deletedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"},{"name":"assignments","kind":"object","type":"DonationAssignment","relationName":"BloodRequestToDonationAssignment"},{"name":"payments","kind":"object","type":"Payment","relationName":"BloodRequestToPayment"}],"dbName":"blood_requests","schema":null},"DonationAssignment":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requestId","kind":"scalar","type":"String"},{"name":"request","kind":"object","type":"BloodRequest","relationName":"BloodRequestToDonationAssignment"},{"name":"donorId","kind":"scalar","type":"String"},{"name":"donor","kind":"object","type":"User","relationName":"DonationAssignmentToUser"},{"name":"status","kind":"enum","type":"DonationStatus"},{"name":"notes","kind":"scalar","type":"String"},{"name":"completedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"donation_assignments","schema":null},"Payment":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"requestId","kind":"scalar","type":"String"},{"name":"request","kind":"object","type":"BloodRequest","relationName":"BloodRequestToPayment"},{"name":"payerId","kind":"scalar","type":"String"},{"name":"payer","kind":"object","type":"User","relationName":"PaymentToUser"},{"name":"amount","kind":"scalar","type":"Float"},{"name":"amountMinor","kind":"scalar","type":"Int"},{"name":"currency","kind":"scalar","type":"String"},{"name":"paymentMethod","kind":"enum","type":"PaymentMethod"},{"name":"paymentId","kind":"scalar","type":"String"},{"name":"transactionId","kind":"scalar","type":"String"},{"name":"status","kind":"enum","type":"PaymentStatus"},{"name":"paymentExecuteResponse","kind":"scalar","type":"Json"},{"name":"merchantInvoiceNumber","kind":"scalar","type":"String"},{"name":"checkoutUrl","kind":"scalar","type":"String"},{"name":"idempotencyKey","kind":"scalar","type":"String"},{"name":"initiationFingerprint","kind":"scalar","type":"String"},{"name":"failureReason","kind":"scalar","type":"String"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"payments","schema":null},"AuditLog":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"userId","kind":"scalar","type":"String"},{"name":"user","kind":"object","type":"User","relationName":"AuditLogToUser"},{"name":"action","kind":"scalar","type":"String"},{"name":"resource","kind":"scalar","type":"String"},{"name":"resourceId","kind":"scalar","type":"String"},{"name":"details","kind":"scalar","type":"Json"},{"name":"ipAddress","kind":"scalar","type":"String"},{"name":"createdAt","kind":"scalar","type":"DateTime"}],"dbName":"audit_logs","schema":null},"User":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"name","kind":"scalar","type":"String"},{"name":"email","kind":"scalar","type":"String"},{"name":"password","kind":"scalar","type":"String"},{"name":"role","kind":"enum","type":"Role"},{"name":"status","kind":"enum","type":"UserStatus"},{"name":"googleId","kind":"scalar","type":"String"},{"name":"phone","kind":"scalar","type":"String"},{"name":"address","kind":"scalar","type":"String"},{"name":"isDeleted","kind":"scalar","type":"Boolean"},{"name":"deletedAt","kind":"scalar","type":"DateTime"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"},{"name":"donorProfile","kind":"object","type":"DonorProfile","relationName":"DonorProfileToUser"},{"name":"bloodRequests","kind":"object","type":"BloodRequest","relationName":"BloodRequestToUser"},{"name":"assignments","kind":"object","type":"DonationAssignment","relationName":"DonationAssignmentToUser"},{"name":"payments","kind":"object","type":"Payment","relationName":"PaymentToUser"},{"name":"auditLogs","kind":"object","type":"AuditLog","relationName":"AuditLogToUser"}],"dbName":"users","schema":null},"DonorProfile":{"fields":[{"name":"id","kind":"scalar","type":"String"},{"name":"userId","kind":"scalar","type":"String"},{"name":"user","kind":"object","type":"User","relationName":"DonorProfileToUser"},{"name":"bloodGroup","kind":"enum","type":"BloodGroup"},{"name":"isAvailable","kind":"scalar","type":"Boolean"},{"name":"lastDonationDate","kind":"scalar","type":"DateTime"},{"name":"totalDonations","kind":"scalar","type":"Int"},{"name":"phone","kind":"scalar","type":"String"},{"name":"address","kind":"scalar","type":"String"},{"name":"latitude","kind":"scalar","type":"Float"},{"name":"longitude","kind":"scalar","type":"Float"},{"name":"createdAt","kind":"scalar","type":"DateTime"},{"name":"updatedAt","kind":"scalar","type":"DateTime"}],"dbName":"donor_profiles","schema":null}},"enums":{},"types":{}}');
 config.parameterizationSchema = {
-  strings: JSON.parse('["where","user","donorProfile","orderBy","cursor","bloodRequests","request","donor","assignments","payer","payments","auditLogs","_count","requester","BloodRequest.findUnique","BloodRequest.findUniqueOrThrow","BloodRequest.findFirst","BloodRequest.findFirstOrThrow","BloodRequest.findMany","data","BloodRequest.createOne","BloodRequest.createMany","BloodRequest.createManyAndReturn","BloodRequest.updateOne","BloodRequest.updateMany","BloodRequest.updateManyAndReturn","create","update","BloodRequest.upsertOne","BloodRequest.deleteOne","BloodRequest.deleteMany","having","_avg","_sum","_min","_max","BloodRequest.groupBy","BloodRequest.aggregate","DonationAssignment.findUnique","DonationAssignment.findUniqueOrThrow","DonationAssignment.findFirst","DonationAssignment.findFirstOrThrow","DonationAssignment.findMany","DonationAssignment.createOne","DonationAssignment.createMany","DonationAssignment.createManyAndReturn","DonationAssignment.updateOne","DonationAssignment.updateMany","DonationAssignment.updateManyAndReturn","DonationAssignment.upsertOne","DonationAssignment.deleteOne","DonationAssignment.deleteMany","DonationAssignment.groupBy","DonationAssignment.aggregate","Payment.findUnique","Payment.findUniqueOrThrow","Payment.findFirst","Payment.findFirstOrThrow","Payment.findMany","Payment.createOne","Payment.createMany","Payment.createManyAndReturn","Payment.updateOne","Payment.updateMany","Payment.updateManyAndReturn","Payment.upsertOne","Payment.deleteOne","Payment.deleteMany","Payment.groupBy","Payment.aggregate","AuditLog.findUnique","AuditLog.findUniqueOrThrow","AuditLog.findFirst","AuditLog.findFirstOrThrow","AuditLog.findMany","AuditLog.createOne","AuditLog.createMany","AuditLog.createManyAndReturn","AuditLog.updateOne","AuditLog.updateMany","AuditLog.updateManyAndReturn","AuditLog.upsertOne","AuditLog.deleteOne","AuditLog.deleteMany","AuditLog.groupBy","AuditLog.aggregate","User.findUnique","User.findUniqueOrThrow","User.findFirst","User.findFirstOrThrow","User.findMany","User.createOne","User.createMany","User.createManyAndReturn","User.updateOne","User.updateMany","User.updateManyAndReturn","User.upsertOne","User.deleteOne","User.deleteMany","User.groupBy","User.aggregate","DonorProfile.findUnique","DonorProfile.findUniqueOrThrow","DonorProfile.findFirst","DonorProfile.findFirstOrThrow","DonorProfile.findMany","DonorProfile.createOne","DonorProfile.createMany","DonorProfile.createManyAndReturn","DonorProfile.updateOne","DonorProfile.updateMany","DonorProfile.updateManyAndReturn","DonorProfile.upsertOne","DonorProfile.deleteOne","DonorProfile.deleteMany","DonorProfile.groupBy","DonorProfile.aggregate","AND","OR","NOT","id","userId","BloodGroup","bloodGroup","isAvailable","lastDonationDate","totalDonations","phone","address","latitude","longitude","createdAt","updatedAt","equals","in","notIn","lt","lte","gt","gte","not","contains","startsWith","endsWith","name","email","password","Role","role","UserStatus","status","googleId","isDeleted","deletedAt","every","some","none","action","resource","resourceId","details","ipAddress","string_contains","string_starts_with","string_ends_with","array_starts_with","array_ends_with","array_contains","requestId","payerId","amount","PaymentMethod","paymentMethod","paymentId","transactionId","PaymentStatus","paymentExecuteResponse","donorId","DonationStatus","notes","completedAt","requesterId","patientName","unitsNeeded","unitsFulfilled","hospitalName","hospitalAddress","contactNumber","UrgencyLevel","urgency","RequestStatus","requestId_donorId","is","isNot","connectOrCreate","upsert","createMany","set","disconnect","delete","connect","updateMany","deleteMany","increment","decrement","multiply","divide"]'),
-  graph: "wAM5YBgIAADYAQAgCgAA2QEAIA0AAMoBACB2AACAAgAwdwAABQAQeAAAgAIAMHkBAAAAAXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiAQAAAAEAIBABAADKAQAgdgAAwgEAMHcAAAMAEHgAAMIBADB5AQDTAQAhegEA0wEAIXwAAMMBfCN9IADEAQAhfkAAxQEAIX8CAMYBACGAAQEAxwEAIYEBAQDHAQAhggEIAMgBACGDAQgAyAEAIYQBQADJAQAhhQFAAMkBACEBAAAAAwAgGAgAANgBACAKAADZAQAgDQAAygEAIHYAAIACADB3AAAFABB4AACAAgAweQEA0wEAIXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiBQgAAIADACAKAACBAwAgDQAAlAIAIJoBAACEAgAgtAEAAIQCACADAAAABQAgAwAABgAwBAAAAQAgDQYAAPwBACAHAADKAQAgdgAA_gEAMHcAAAgAEHgAAP4BADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAAD_AbQBIqkBAQDTAQAhsgEBANMBACG0AQEAxwEAIbUBQADFAQAhBAYAAJcDACAHAACUAgAgtAEAAIQCACC1AQAAhAIAIA4GAAD8AQAgBwAAygEAIHYAAP4BADB3AAAIABB4AAD-AQAweQEAAAABhAFAAMkBACGFAUAAyQEAIZcBAAD_AbQBIqkBAQDTAQAhsgEBANMBACG0AQEAxwEAIbUBQADFAQAhwAEAAP0BACADAAAACAAgAwAACQAwBAAACgAgEAYAAPwBACAJAADKAQAgdgAA-AEAMHcAAAwAEHgAAPgBADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAAD7AbEBIqkBAQDTAQAhqgEBANMBACGrAQgA-QEAIa0BAAD6Aa0BIq4BAQDTAQAhrwEBAMcBACGxAQAA9gEAIAQGAACXAwAgCQAAlAIAIK8BAACEAgAgsQEAAIQCACAQBgAA_AEAIAkAAMoBACB2AAD4AQAwdwAADAAQeAAA-AEAMHkBAAAAAYQBQADJAQAhhQFAAMkBACGXAQAA-wGxASKpAQEA0wEAIaoBAQDTAQAhqwEIAPkBACGtAQAA-gGtASKuAQEAAAABrwEBAMcBACGxAQAA9gEAIAMAAAAMACADAAANADAEAAAOACAMAQAA9wEAIHYAAPUBADB3AAAQABB4AAD1AQAweQEA0wEAIXoBAMcBACGEAUAAyQEAIZ4BAQDTAQAhnwEBANMBACGgAQEAxwEAIaEBAAD2AQAgogEBAMcBACEFAQAAlAIAIHoAAIQCACCgAQAAhAIAIKEBAACEAgAgogEAAIQCACAMAQAA9wEAIHYAAPUBADB3AAAQABB4AAD1AQAweQEAAAABegEAxwEAIYQBQADJAQAhngEBANMBACGfAQEA0wEAIaABAQDHAQAhoQEAAPYBACCiAQEAxwEAIQMAAAAQACADAAARADAEAAASACAVAgAA1gEAIAUAANcBACAIAADYAQAgCgAA2QEAIAsAANoBACB2AADSAQAwdwAAFAAQeAAA0gEAMHkBANMBACGAAQEAxwEAIYEBAQDHAQAhhAFAAMkBACGFAUAAyQEAIZEBAQDTAQAhkgEBANMBACGTAQEAxwEAIZUBAADUAZUBIpcBAADVAZcBIpgBAQDHAQAhmQEgAMQBACGaAUAAxQEAIQEAAAAUACABAAAABQAgAQAAAAgAIAEAAAAMACABAAAAEAAgAwAAAAgAIAMAAAkAMAQAAAoAIAMAAAAMACADAAANADAEAAAOACABAAAACAAgAQAAAAwAIAEAAAABACADAAAABQAgAwAABgAwBAAAAQAgAwAAAAUAIAMAAAYAMAQAAAEAIAMAAAAFACADAAAGADAEAAABACAVCAAA8gIAIAoAAPMCACANAACWAwAgeQEAAAABfAAAAHwCggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAZcBAAAAwAECmQEgAAAAAZoBQAAAAAG0AQEAAAABtgEBAAAAAbcBAQAAAAG4AQIAAAABuQECAAAAAboBAQAAAAG7AQEAAAABvAEBAAAAAb4BAAAAvgECARMAACIAIBJ5AQAAAAF8AAAAfAKCAQgAAAABgwEIAAAAAYQBQAAAAAGFAUAAAAABlwEAAADAAQKZASAAAAABmgFAAAAAAbQBAQAAAAG2AQEAAAABtwEBAAAAAbgBAgAAAAG5AQIAAAABugEBAAAAAbsBAQAAAAG8AQEAAAABvgEAAAC-AQIBEwAAJAAwARMAACQAMBUIAADZAgAgCgAA2gIAIA0AAJUDACB5AQCKAgAhfAAA1QJ8IoIBCAC1AgAhgwEIALUCACGEAUAAkQIAIYUBQACRAgAhlwEAANcCwAEimQEgAIwCACGaAUAAjQIAIbQBAQCPAgAhtgEBAIoCACG3AQEAigIAIbgBAgCOAgAhuQECAI4CACG6AQEAigIAIbsBAQCKAgAhvAEBAIoCACG-AQAA1gK-ASICAAAAAQAgEwAAJwAgEnkBAIoCACF8AADVAnwiggEIALUCACGDAQgAtQIAIYQBQACRAgAhhQFAAJECACGXAQAA1wLAASKZASAAjAIAIZoBQACNAgAhtAEBAI8CACG2AQEAigIAIbcBAQCKAgAhuAECAI4CACG5AQIAjgIAIboBAQCKAgAhuwEBAIoCACG8AQEAigIAIb4BAADWAr4BIgIAAAAFACATAAApACACAAAABQAgEwAAKQAgAwAAAAEAIBoAACIAIBsAACcAIAEAAAABACABAAAABQAgBwwAAJADACAgAACRAwAgIQAAlAMAICIAAJMDACAjAACSAwAgmgEAAIQCACC0AQAAhAIAIBV2AADrAQAwdwAAMAAQeAAA6wEAMHkBAKgBACF8AADsAXwiggEIAN8BACGDAQgA3wEAIYQBQACvAQAhhQFAAK8BACGXAQAA7gHAASKZASAAqgEAIZoBQACrAQAhtAEBAK0BACG2AQEAqAEAIbcBAQCoAQAhuAECAKwBACG5AQIArAEAIboBAQCoAQAhuwEBAKgBACG8AQEAqAEAIb4BAADtAb4BIgMAAAAFACADAAAvADAfAAAwACADAAAABQAgAwAABgAwBAAAAQAgAQAAAAoAIAEAAAAKACADAAAACAAgAwAACQAwBAAACgAgAwAAAAgAIAMAAAkAMAQAAAoAIAMAAAAIACADAAAJADAEAAAKACAKBgAAygIAIAcAAPACACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAtAECqQEBAAAAAbIBAQAAAAG0AQEAAAABtQFAAAAAAQETAAA4ACAIeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALQBAqkBAQAAAAGyAQEAAAABtAEBAAAAAbUBQAAAAAEBEwAAOgAwARMAADoAMAoGAADIAgAgBwAA7gIAIHkBAIoCACGEAUAAkQIAIYUBQACRAgAhlwEAAMYCtAEiqQEBAIoCACGyAQEAigIAIbQBAQCPAgAhtQFAAI0CACECAAAACgAgEwAAPQAgCHkBAIoCACGEAUAAkQIAIYUBQACRAgAhlwEAAMYCtAEiqQEBAIoCACGyAQEAigIAIbQBAQCPAgAhtQFAAI0CACECAAAACAAgEwAAPwAgAgAAAAgAIBMAAD8AIAMAAAAKACAaAAA4ACAbAAA9ACABAAAACgAgAQAAAAgAIAUMAACNAwAgIgAAjwMAICMAAI4DACC0AQAAhAIAILUBAACEAgAgC3YAAOcBADB3AABGABB4AADnAQAweQEAqAEAIYQBQACvAQAhhQFAAK8BACGXAQAA6AG0ASKpAQEAqAEAIbIBAQCoAQAhtAEBAK0BACG1AUAAqwEAIQMAAAAIACADAABFADAfAABGACADAAAACAAgAwAACQAwBAAACgAgAQAAAA4AIAEAAAAOACADAAAADAAgAwAADQAwBAAADgAgAwAAAAwAIAMAAA0AMAQAAA4AIAMAAAAMACADAAANADAEAAAOACANBgAAuwIAIAkAAOUCACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAsQECqQEBAAAAAaoBAQAAAAGrAQgAAAABrQEAAACtAQKuAQEAAAABrwEBAAAAAbEBgAAAAAEBEwAATgAgC3kBAAAAAYQBQAAAAAGFAUAAAAABlwEAAACxAQKpAQEAAAABqgEBAAAAAasBCAAAAAGtAQAAAK0BAq4BAQAAAAGvAQEAAAABsQGAAAAAAQETAABQADABEwAAUAAwDQYAALkCACAJAADjAgAgeQEAigIAIYQBQACRAgAhhQFAAJECACGXAQAAtwKxASKpAQEAigIAIaoBAQCKAgAhqwEIALUCACGtAQAAtgKtASKuAQEAigIAIa8BAQCPAgAhsQGAAAAAAQIAAAAOACATAABTACALeQEAigIAIYQBQACRAgAhhQFAAJECACGXAQAAtwKxASKpAQEAigIAIaoBAQCKAgAhqwEIALUCACGtAQAAtgKtASKuAQEAigIAIa8BAQCPAgAhsQGAAAAAAQIAAAAMACATAABVACACAAAADAAgEwAAVQAgAwAAAA4AIBoAAE4AIBsAAFMAIAEAAAAOACABAAAADAAgBwwAAIgDACAgAACJAwAgIQAAjAMAICIAAIsDACAjAACKAwAgrwEAAIQCACCxAQAAhAIAIA52AADeAQAwdwAAXAAQeAAA3gEAMHkBAKgBACGEAUAArwEAIYUBQACvAQAhlwEAAOEBsQEiqQEBAKgBACGqAQEAqAEAIasBCADfAQAhrQEAAOABrQEirgEBAKgBACGvAQEArQEAIbEBAADcAQAgAwAAAAwAIAMAAFsAMB8AAFwAIAMAAAAMACADAAANADAEAAAOACABAAAAEgAgAQAAABIAIAMAAAAQACADAAARADAEAAASACADAAAAEAAgAwAAEQAwBAAAEgAgAwAAABAAIAMAABEAMAQAABIAIAkBAACHAwAgeQEAAAABegEAAAABhAFAAAAAAZ4BAQAAAAGfAQEAAAABoAEBAAAAAaEBgAAAAAGiAQEAAAABARMAAGQAIAh5AQAAAAF6AQAAAAGEAUAAAAABngEBAAAAAZ8BAQAAAAGgAQEAAAABoQGAAAAAAaIBAQAAAAEBEwAAZgAwARMAAGYAMAEAAAAUACAJAQAAhgMAIHkBAIoCACF6AQCPAgAhhAFAAJECACGeAQEAigIAIZ8BAQCKAgAhoAEBAI8CACGhAYAAAAABogEBAI8CACECAAAAEgAgEwAAagAgCHkBAIoCACF6AQCPAgAhhAFAAJECACGeAQEAigIAIZ8BAQCKAgAhoAEBAI8CACGhAYAAAAABogEBAI8CACECAAAAEAAgEwAAbAAgAgAAABAAIBMAAGwAIAEAAAAUACADAAAAEgAgGgAAZAAgGwAAagAgAQAAABIAIAEAAAAQACAHDAAAgwMAICIAAIUDACAjAACEAwAgegAAhAIAIKABAACEAgAgoQEAAIQCACCiAQAAhAIAIAt2AADbAQAwdwAAdAAQeAAA2wEAMHkBAKgBACF6AQCtAQAhhAFAAK8BACGeAQEAqAEAIZ8BAQCoAQAhoAEBAK0BACGhAQAA3AEAIKIBAQCtAQAhAwAAABAAIAMAAHMAMB8AAHQAIAMAAAAQACADAAARADAEAAASACAVAgAA1gEAIAUAANcBACAIAADYAQAgCgAA2QEAIAsAANoBACB2AADSAQAwdwAAFAAQeAAA0gEAMHkBAAAAAYABAQDHAQAhgQEBAMcBACGEAUAAyQEAIYUBQADJAQAhkQEBANMBACGSAQEAAAABkwEBAMcBACGVAQAA1AGVASKXAQAA1QGXASKYAQEAAAABmQEgAMQBACGaAUAAxQEAIQEAAAB3ACABAAAAdwAgCgIAAP4CACAFAAD_AgAgCAAAgAMAIAoAAIEDACALAACCAwAggAEAAIQCACCBAQAAhAIAIJMBAACEAgAgmAEAAIQCACCaAQAAhAIAIAMAAAAUACADAAB6ADAEAAB3ACADAAAAFAAgAwAAegAwBAAAdwAgAwAAABQAIAMAAHoAMAQAAHcAIBICAAD5AgAgBQAA-gIAIAgAAPsCACAKAAD8AgAgCwAA_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_AgCsAQAhgAEBAK0BACGBAQEArQEAIYIBCACuAQAhgwEIAK4BACGEAUAArwEAIYUBQACvAQAhAwAAAAMAIAMAAKMBADAfAACkAQAgAwAAAAMAIAMAAJIBADAEAACPAQAgD3YAAKcBADB3AACkAQAQeAAApwEAMHkBAKgBACF6AQCoAQAhfAAAqQF8I30gAKoBACF-QACrAQAhfwIArAEAIYABAQCtAQAhgQEBAK0BACGCAQgArgEAIYMBCACuAQAhhAFAAK8BACGFAUAArwEAIQ4MAACxAQAgIgAAwQEAICMAAMEBACCGAQEAAAABhwEBAAAABIgBAQAAAASJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBAMABACGOAQEAAAABjwEBAAAAAZABAQAAAAEHDAAAtAEAICIAAL8BACAjAAC_AQAghgEAAAB8A4cBAAAAfAmIAQAAAHwJjQEAAL4BfCMFDAAAsQEAICIAAL0BACAjAAC9AQAghgEgAAAAAY0BIAC8AQAhCwwAALQBACAiAAC7AQAgIwAAuwEAIIYBQAAAAAGHAUAAAAAFiAFAAAAABYkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAugEAIQ0MAACxAQAgIAAAuQEAICEAALEBACAiAACxAQAgIwAAsQEAIIYBAgAAAAGHAQIAAAAEiAECAAAABIkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAuAEAIQ4MAAC0AQAgIgAAtwEAICMAALcBACCGAQEAAAABhwEBAAAABYgBAQAAAAWJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBALYBACGOAQEAAAABjwEBAAAAAZABAQAAAAENDAAAtAEAICAAALUBACAhAAC1AQAgIgAAtQEAICMAALUBACCGAQgAAAABhwEIAAAABYgBCAAAAAWJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALMBACELDAAAsQEAICIAALIBACAjAACyAQAghgFAAAAAAYcBQAAAAASIAUAAAAAEiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQACwAQAhCwwAALEBACAiAACyAQAgIwAAsgEAIIYBQAAAAAGHAUAAAAAEiAFAAAAABIkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAsAEAIQiGAQIAAAABhwECAAAABIgBAgAAAASJAQIAAAABigECAAAAAYsBAgAAAAGMAQIAAAABjQECALEBACEIhgFAAAAAAYcBQAAAAASIAUAAAAAEiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQACyAQAhDQwAALQBACAgAAC1AQAgIQAAtQEAICIAALUBACAjAAC1AQAghgEIAAAAAYcBCAAAAAWIAQgAAAAFiQEIAAAAAYoBCAAAAAGLAQgAAAABjAEIAAAAAY0BCACzAQAhCIYBAgAAAAGHAQIAAAAFiAECAAAABYkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAtAEAIQiGAQgAAAABhwEIAAAABYgBCAAAAAWJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALUBACEODAAAtAEAICIAALcBACAjAAC3AQAghgEBAAAAAYcBAQAAAAWIAQEAAAAFiQEBAAAAAYoBAQAAAAGLAQEAAAABjAEBAAAAAY0BAQC2AQAhjgEBAAAAAY8BAQAAAAGQAQEAAAABC4YBAQAAAAGHAQEAAAAFiAEBAAAABYkBAQAAAAGKAQEAAAABiwEBAAAAAYwBAQAAAAGNAQEAtwEAIY4BAQAAAAGPAQEAAAABkAEBAAAAAQ0MAACxAQAgIAAAuQEAICEAALEBACAiAACxAQAgIwAAsQEAIIYBAgAAAAGHAQIAAAAEiAECAAAABIkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAuAEAIQiGAQgAAAABhwEIAAAABIgBCAAAAASJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALkBACELDAAAtAEAICIAALsBACAjAAC7AQAghgFAAAAAAYcBQAAAAAWIAUAAAAAFiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQAC6AQAhCIYBQAAAAAGHAUAAAAAFiAFAAAAABYkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAuwEAIQUMAACxAQAgIgAAvQEAICMAAL0BACCGASAAAAABjQEgALwBACEChgEgAAAAAY0BIAC9AQAhBwwAALQBACAiAAC_AQAgIwAAvwEAIIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC-AXwjBIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC_AXwjDgwAALEBACAiAADBAQAgIwAAwQEAIIYBAQAAAAGHAQEAAAAEiAEBAAAABIkBAQAAAAGKAQEAAAABiwEBAAAAAYwBAQAAAAGNAQEAwAEAIY4BAQAAAAGPAQEAAAABkAEBAAAAAQuGAQEAAAABhwEBAAAABIgBAQAAAASJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBAMEBACGOAQEAAAABjwEBAAAAAZABAQAAAAEQAQAAygEAIHYAAMIBADB3AAADABB4AADCAQAweQEA0wEAIXoBANMBACF8AADDAXwjfSAAxAEAIX5AAMUBACF_AgDGAQAhgAEBAMcBACGBAQEAxwEAIYIBCADIAQAhgwEIAMgBACGEAUAAyQEAIYUBQADJAQAhBIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC_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-AQiNAQAA8QG-ASIEhgEAAAC-AQKHAQAAAL4BCIgBAAAAvgEIjQEAAPIBvgEiBwwAALEBACAiAAD0AQAgIwAA9AEAIIYBAAAAfAKHAQAAAHwIiAEAAAB8CI0BAADzAXwiBIYBAAAAfAKHAQAAAHwIiAEAAAB8CI0BAAD0AXwiDAEAAPcBACB2AAD1AQAwdwAAEAAQeAAA9QEAMHkBANMBACF6AQDHAQAhhAFAAMkBACGeAQEA0wEAIZ8BAQDTAQAhoAEBAMcBACGhAQAA9gEAIKIBAQDHAQAhDIYBgAAAAAGJAYAAAAABigGAAAAAAYsBgAAAAAGMAYAAAAABjQGAAAAAAaMBAQAAAAGkAQEAAAABpQEBAAAAAaYBgAAAAAGnAYAAAAABqAGAAAAAARcCAADWAQAgBQAA1wEAIAgAANgBACAKAADZAQAgCwAA2gEAIHYAANIBADB3AAAUABB4AADSAQAweQEA0wEAIYABAQDHAQAhgQEBAMcBACGEAUAAyQEAIYUBQADJAQAhkQEBANMBACGSAQEA0wEAIZMBAQDHAQAhlQEAANQBlQEilwEAANUBlwEimAEBAMcBACGZASAAxAEAIZoBQADFAQAhwQEAABQAIMIBAAAUACAQBgAA_AEAIAkAAMoBACB2AAD4AQAwdwAADAAQeAAA-AEAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAPsBsQEiqQEBANMBACGqAQEA0wEAIasBCAD5AQAhrQEAAPoBrQEirgEBANMBACGvAQEAxwEAIbEBAAD2AQAgCIYBCAAAAAGHAQgAAAAEiAEIAAAABIkBCAAAAAGKAQgAAAABiwEIAAAAAYwBCAAAAAGNAQgAuQEAIQSGAQAAAK0BAocBAAAArQEIiAEAAACtAQiNAQAA5QGtASIEhgEAAACxAQKHAQAAALEBCIgBAAAAsQEIjQEAAOMBsQEiGggAANgBACAKAADZAQAgDQAAygEAIHYAAIACADB3AAAFABB4AACAAgAweQEA0wEAIXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiwQEAAAUAIMIBAAAFACACqQEBAAAAAbIBAQAAAAENBgAA_AEAIAcAAMoBACB2AAD-AQAwdwAACAAQeAAA_gEAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAP8BtAEiqQEBANMBACGyAQEA0wEAIbQBAQDHAQAhtQFAAMUBACEEhgEAAAC0AQKHAQAAALQBCIgBAAAAtAEIjQEAAOoBtAEiGAgAANgBACAKAADZAQAgDQAAygEAIHYAAIACADB3AAAFABB4AACAAgAweQEA0wEAIXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiBIYBAAAAfAKHAQAAAHwIiAEAAAB8CI0BAAD0AXwiBIYBAAAAvgEChwEAAAC-AQiIAQAAAL4BCI0BAADyAb4BIgSGAQAAAMABAocBAAAAwAEIiAEAAADAAQiNAQAA8AHAASIAAAAAAAABxgEBAAAAAQHGAQAAAHwDAcYBIAAAAAEBxgFAAAAAAQXGAQIAAAABzAECAAAAAc0BAgAAAAHOAQIAAAABzwECAAAAAQHGAQEAAAABBcYBCAAAAAHMAQgAAAABzQEIAAAAAc4BCAAAAAHPAQgAAAABAcYBQAAAAAEFGgAAvAMAIBsAAL8DACDDAQAAvQMAIMQBAAC-AwAgyQEAAHcAIAMaAAC8AwAgwwEAAL0DACDJAQAAdwAgCgIAAP4CACAFAAD_AgAgCAAAgAMAIAoAAIEDACALAACCAwAggAEAAIQCACCBAQAAhAIAIJMBAACEAgAgmAEAAIQCACCaAQAAhAIAIAAAAAHGAQAAAJUBAgHGAQAAAJcBAgcaAAD0AgAgGwAA9wIAIMMBAAD1AgAgxAEAAPYCACDHAQAAAwAgyAEAAAMAIMkBAACPAQAgCxoAAMsCADAbAADQAgAwwwEAAMwCADDEAQAAzQIAMMUBAADOAgAgxgEAAM8CADDHAQAAzwIAMMgBAADPAgAwyQEAAM8CADDKAQAA0QIAMMsBAADSAgAwCxoAALwCADAbAADBAgAwwwEAAL0CADDEAQAAvgIAMMUBAAC_AgAgxgEAAMACADDHAQAAwAIAMMgBAADAAgAwyQEAAMACADDKAQAAwgIAMMsBAADDAgAwCxoAAKsCADAbAACwAgAwwwEAAKwCADDEAQAArQIAMMUBAACuAgAgxgEAAK8CADDHAQAArwIAMMgBAACvAgAwyQEAAK8CADDKAQAAsQIAMMsBAACyAgAwCxoAAJ8CADAbAACkAgAwwwEAAKACADDEAQAAoQIAMMUBAACiAgAgxgEAAKMCADDHAQAAowIAMMgBAACjAgAwyQEAAKMCADDKAQAApQIAMMsBAACmAgAwB3kBAAAAAYQBQAAAAAGeAQEAAAABnwEBAAAAAaABAQAAAAGhAYAAAAABogEBAAAAAQIAAAASACAaAACqAgAgAwAAABIAIBoAAKoCACAbAACpAgAgARMAALsDADAMAQAA9wEAIHYAAPUBADB3AAAQABB4AAD1AQAweQEAAAABegEAxwEAIYQBQADJAQAhngEBANMBACGfAQEA0wEAIaABAQDHAQAhoQEAAPYBACCiAQEAxwEAIQIAAAASACATAACpAgAgAgAAAKcCACATAACoAgAgC3YAAKYCADB3AACnAgAQeAAApgIAMHkBANMBACF6AQDHAQAhhAFAAMkBACGeAQEA0wEAIZ8BAQDTAQAhoAEBAMcBACGhAQAA9gEAIKIBAQDHAQAhC3YAAKYCADB3AACnAgAQeAAApgIAMHkBANMBACF6AQDHAQAhhAFAAMkBACGeAQEA0wEAIZ8BAQDTAQAhoAEBAMcBACGhAQAA9gEAIKIBAQDHAQAhB3kBAIoCACGEAUAAkQIAIZ4BAQCKAgAhnwEBAIoCACGgAQEAjwIAIaEBgAAAAAGiAQEAjwIAIQd5AQCKAgAhhAFAAJECACGeAQEAigIAIZ8BAQCKAgAhoAEBAI8CACGhAYAAAAABogEBAI8CACEHeQEAAAABhAFAAAAAAZ4BAQAAAAGfAQEAAAABoAEBAAAAAaEBgAAAAAGiAQEAAAABCwYAALsCACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAsQECqQEBAAAAAasBCAAAAAGtAQAAAK0BAq4BAQAAAAGvAQEAAAABsQGAAAAAAQIAAAAOACAaAAC6AgAgAwAAAA4AIBoAALoCACAbAAC4AgAgARMAALoDADAQBgAA_AEAIAkAAMoBACB2AAD4AQAwdwAADAAQeAAA-AEAMHkBAAAAAYQBQADJAQAhhQFAAMkBACGXAQAA-wGxASKpAQEA0wEAIaoBAQDTAQAhqwEIAPkBACGtAQAA-gGtASKuAQEAAAABrwEBAMcBACGxAQAA9gEAIAIAAAAOACATAAC4AgAgAgAAALMCACATAAC0AgAgDnYAALICADB3AACzAgAQeAAAsgIAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAPsBsQEiqQEBANMBACGqAQEA0wEAIasBCAD5AQAhrQEAAPoBrQEirgEBANMBACGvAQEAxwEAIbEBAAD2AQAgDnYAALICADB3AACzAgAQeAAAsgIAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAPsBsQEiqQEBANMBACGqAQEA0wEAIasBCAD5AQAhrQEAAPoBrQEirgEBANMBACGvAQEAxwEAIbEBAAD2AQAgCnkBAIoCACGEAUAAkQIAIYUBQACRAgAhlwEAALcCsQEiqQEBAIoCACGrAQgAtQIAIa0BAAC2Aq0BIq4BAQCKAgAhrwEBAI8CACGxAYAAAAABBcYBCAAAAAHMAQgAAAABzQEIAAAAAc4BCAAAAAHPAQgAAAABAcYBAAAArQECAcYBAAAAsQECCwYAALkCACB5AQCKAgAhhAFAAJECACGFAUAAkQIAIZcBAAC3ArEBIqkBAQCKAgAhqwEIALUCACGtAQAAtgKtASKuAQEAigIAIa8BAQCPAgAhsQGAAAAAAQUaAAC1AwAgGwAAuAMAIMMBAAC2AwAgxAEAALcDACDJAQAAAQAgCwYAALsCACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAsQECqQEBAAAAAasBCAAAAAGtAQAAAK0BAq4BAQAAAAGvAQEAAAABsQGAAAAAAQMaAAC1AwAgwwEAALYDACDJAQAAAQAgCAYAAMoCACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAtAECqQEBAAAAAbQBAQAAAAG1AUAAAAABAgAAAAoAIBoAAMkCACADAAAACgAgGgAAyQIAIBsAAMcCACABEwAAtAMAMA4GAAD8AQAgBwAAygEAIHYAAP4BADB3AAAIABB4AAD-AQAweQEAAAABhAFAAMkBACGFAUAAyQEAIZcBAAD_AbQBIqkBAQDTAQAhsgEBANMBACG0AQEAxwEAIbUBQADFAQAhwAEAAP0BACACAAAACgAgEwAAxwIAIAIAAADEAgAgEwAAxQIAIAt2AADDAgAwdwAAxAIAEHgAAMMCADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAAD_AbQBIqkBAQDTAQAhsgEBANMBACG0AQEAxwEAIbUBQADFAQAhC3YAAMMCADB3AADEAgAQeAAAwwIAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAP8BtAEiqQEBANMBACGyAQEA0wEAIbQBAQDHAQAhtQFAAMUBACEHeQEAigIAIYQBQACRAgAhhQFAAJECACGXAQAAxgK0ASKpAQEAigIAIbQBAQCPAgAhtQFAAI0CACEBxgEAAAC0AQIIBgAAyAIAIHkBAIoCACGEAUAAkQIAIYUBQACRAgAhlwEAAMYCtAEiqQEBAIoCACG0AQEAjwIAIbUBQACNAgAhBRoAAK8DACAbAACyAwAgwwEAALADACDEAQAAsQMAIMkBAAABACAIBgAAygIAIHkBAAAAAYQBQAAAAAGFAUAAAAABlwEAAAC0AQKpAQEAAAABtAEBAAAAAbUBQAAAAAEDGgAArwMAIMMBAACwAwAgyQEAAAEAIBMIAADyAgAgCgAA8wIAIHkBAAAAAXwAAAB8AoIBCAAAAAGDAQgAAAABhAFAAAAAAYUBQAAAAAGXAQAAAMABApkBIAAAAAGaAUAAAAABtAEBAAAAAbcBAQAAAAG4AQIAAAABuQECAAAAAboBAQAAAAG7AQEAAAABvAEBAAAAAb4BAAAAvgECAgAAAAEAIBoAAPECACADAAAAAQAgGgAA8QIAIBsAANgCACABEwAArgMAMBgIAADYAQAgCgAA2QEAIA0AAMoBACB2AACAAgAwdwAABQAQeAAAgAIAMHkBAAAAAXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiAgAAAAEAIBMAANgCACACAAAA0wIAIBMAANQCACAVdgAA0gIAMHcAANMCABB4AADSAgAweQEA0wEAIXwAAIECfCKCAQgA-QEAIYMBCAD5AQAhhAFAAMkBACGFAUAAyQEAIZcBAACDAsABIpkBIADEAQAhmgFAAMUBACG0AQEAxwEAIbYBAQDTAQAhtwEBANMBACG4AQIAxgEAIbkBAgDGAQAhugEBANMBACG7AQEA0wEAIbwBAQDTAQAhvgEAAIICvgEiFXYAANICADB3AADTAgAQeAAA0gIAMHkBANMBACF8AACBAnwiggEIAPkBACGDAQgA-QEAIYQBQADJAQAhhQFAAMkBACGXAQAAgwLAASKZASAAxAEAIZoBQADFAQAhtAEBAMcBACG2AQEA0wEAIbcBAQDTAQAhuAECAMYBACG5AQIAxgEAIboBAQDTAQAhuwEBANMBACG8AQEA0wEAIb4BAACCAr4BIhF5AQCKAgAhfAAA1QJ8IoIBCAC1AgAhgwEIALUCACGEAUAAkQIAIYUBQACRAgAhlwEAANcCwAEimQEgAIwCACGaAUAAjQIAIbQBAQCPAgAhtwEBAIoCACG4AQIAjgIAIbkBAgCOAgAhugEBAIoCACG7AQEAigIAIbwBAQCKAgAhvgEAANYCvgEiAcYBAAAAfAIBxgEAAAC-AQIBxgEAAADAAQITCAAA2QIAIAoAANoCACB5AQCKAgAhfAAA1QJ8IoIBCAC1AgAhgwEIALUCACGEAUAAkQIAIYUBQACRAgAhlwEAANcCwAEimQEgAIwCACGaAUAAjQIAIbQBAQCPAgAhtwEBAIoCACG4AQIAjgIAIbkBAgCOAgAhugEBAIoCACG7AQEAigIAIbwBAQCKAgAhvgEAANYCvgEiCxoAAOYCADAbAADqAgAwwwEAAOcCADDEAQAA6AIAMMUBAADpAgAgxgEAAMACADDHAQAAwAIAMMgBAADAAgAwyQEAAMACADDKAQAA6wIAMMsBAADDAgAwCxoAANsCADAbAADfAgAwwwEAANwCADDEAQAA3QIAMMUBAADeAgAgxgEAAK8CADDHAQAArwIAMMgBAACvAgAwyQEAAK8CADDKAQAA4AIAMMsBAACyAgAwCwkAAOUCACB5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAsQECqgEBAAAAAasBCAAAAAGtAQAAAK0BAq4BAQAAAAGvAQEAAAABsQGAAAAAAQIAAAAOACAaAADkAgAgAwAAAA4AIBoAAOQCACAbAADiAgAgARMAAK0DADACAAAADgAgEwAA4gIAIAIAAACzAgAgEwAA4QIAIAp5AQCKAgAhhAFAAJECACGFAUAAkQIAIZcBAAC3ArEBIqoBAQCKAgAhqwEIALUCACGtAQAAtgKtASKuAQEAigIAIa8BAQCPAgAhsQGAAAAAAQsJAADjAgAgeQEAigIAIYQBQACRAgAhhQFAAJECACGXAQAAtwKxASKqAQEAigIAIasBCAC1AgAhrQEAALYCrQEirgEBAIoCACGvAQEAjwIAIbEBgAAAAAEFGgAAqAMAIBsAAKsDACDDAQAAqQMAIMQBAACqAwAgyQEAAHcAIAsJAADlAgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALEBAqoBAQAAAAGrAQgAAAABrQEAAACtAQKuAQEAAAABrwEBAAAAAbEBgAAAAAEDGgAAqAMAIMMBAACpAwAgyQEAAHcAIAgHAADwAgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALQBArIBAQAAAAG0AQEAAAABtQFAAAAAAQIAAAAKACAaAADvAgAgAwAAAAoAIBoAAO8CACAbAADtAgAgARMAAKcDADACAAAACgAgEwAA7QIAIAIAAADEAgAgEwAA7AIAIAd5AQCKAgAhhAFAAJECACGFAUAAkQIAIZcBAADGArQBIrIBAQCKAgAhtAEBAI8CACG1AUAAjQIAIQgHAADuAgAgeQEAigIAIYQBQACRAgAhhQFAAJECACGXAQAAxgK0ASKyAQEAigIAIbQBAQCPAgAhtQFAAI0CACEFGgAAogMAIBsAAKUDACDDAQAAowMAIMQBAACkAwAgyQEAAHcAIAgHAADwAgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALQBArIBAQAAAAG0AQEAAAABtQFAAAAAAQMaAACiAwAgwwEAAKMDACDJAQAAdwAgEwgAAPICACAKAADzAgAgeQEAAAABfAAAAHwCggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAZcBAAAAwAECmQEgAAAAAZoBQAAAAAG0AQEAAAABtwEBAAAAAbgBAgAAAAG5AQIAAAABugEBAAAAAbsBAQAAAAG8AQEAAAABvgEAAAC-AQIEGgAA5gIAMMMBAADnAgAwxQEAAOkCACDJAQAAwAIAMAQaAADbAgAwwwEAANwCADDFAQAA3gIAIMkBAACvAgAwC3kBAAAAAXwAAAB8A30gAAAAAX5AAAAAAX8CAAAAAYABAQAAAAGBAQEAAAABggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAQIAAACPAQAgGgAA9AIAIAMAAAADACAaAAD0AgAgGwAA-AIAIA0AAAADACATAAD4AgAgeQEAigIAIXwAAIsCfCN9IACMAgAhfkAAjQIAIX8CAI4CACGAAQEAjwIAIYEBAQCPAgAhggEIAJACACGDAQgAkAIAIYQBQACRAgAhhQFAAJECACELeQEAigIAIXwAAIsCfCN9IACMAgAhfkAAjQIAIX8CAI4CACGAAQEAjwIAIYEBAQCPAgAhggEIAJACACGDAQgAkAIAIYQBQACRAgAhhQFAAJECACEDGgAA9AIAIMMBAAD1AgAgyQEAAI8BACAEGgAAywIAMMMBAADMAgAwxQEAAM4CACDJAQAAzwIAMAQaAAC8AgAwwwEAAL0CADDFAQAAvwIAIMkBAADAAgAwBBoAAKsCADDDAQAArAIAMMUBAACuAgAgyQEAAK8CADAEGgAAnwIAMMMBAACgAgAwxQEAAKICACDJAQAAowIAMAcBAACUAgAgfAAAhAIAIH4AAIQCACCAAQAAhAIAIIEBAACEAgAgggEAAIQCACCDAQAAhAIAIAAAAAAAAAAHGgAAnQMAIBsAAKADACDDAQAAngMAIMQBAACfAwAgxwEAABQAIMgBAAAUACDJAQAAdwAgAxoAAJ0DACDDAQAAngMAIMkBAAB3ACAAAAAAAAAAAAAAAAAABRoAAJgDACAbAACbAwAgwwEAAJkDACDEAQAAmgMAIMkBAAB3ACADGgAAmAMAIMMBAACZAwAgyQEAAHcAIAUIAACAAwAgCgAAgQMAIA0AAJQCACCaAQAAhAIAILQBAACEAgAgEQIAAPkCACAIAAD7AgAgCgAA_AIAIAsAAP0CACB5AQAAAAGAAQEAAAABgQEBAAAAAYQBQAAAAAGFAUAAAAABkQEBAAAAAZIBAQAAAAGTAQEAAAABlQEAAACVAQKXAQAAAJcBApgBAQAAAAGZASAAAAABmgFAAAAAAQIAAAB3ACAaAACYAwAgAwAAABQAIBoAAJgDACAbAACcAwAgEwAAABQAIAIAAJoCACAIAACcAgAgCgAAnQIAIAsAAJ4CACATAACcAwAgeQEAigIAIYABAQCPAgAhgQEBAI8CACGEAUAAkQIAIYUBQACRAgAhkQEBAIoCACGSAQEAigIAIZMBAQCPAgAhlQEAAJgClQEilwEAAJkClwEimAEBAI8CACGZASAAjAIAIZoBQACNAgAhEQIAAJoCACAIAACcAgAgCgAAnQIAIAsAAJ4CACB5AQCKAgAhgAEBAI8CACGBAQEAjwIAIYQBQACRAgAhhQFAAJECACGRAQEAigIAIZIBAQCKAgAhkwEBAI8CACGVAQAAmAKVASKXAQAAmQKXASKYAQEAjwIAIZkBIACMAgAhmgFAAI0CACERAgAA-QIAIAUAAPoCACAIAAD7AgAgCgAA_AIAIHkBAAAAAYABAQAAAAGBAQEAAAABhAFAAAAAAYUBQAAAAAGRAQEAAAABkgEBAAAAAZMBAQAAAAGVAQAAAJUBApcBAAAAlwECmAEBAAAAAZkBIAAAAAGaAUAAAAABAgAAAHcAIBoAAJ0DACADAAAAFAAgGgAAnQMAIBsAAKEDACATAAAAFAAgAgAAmgIAIAUAAJsCACAIAACcAgAgCgAAnQIAIBMAAKEDACB5AQCKAgAhgAEBAI8CACGBAQEAjwIAIYQBQACRAgAhhQFAAJECACGRAQEAigIAIZIBAQCKAgAhkwEBAI8CACGVAQAAmAKVASKXAQAAmQKXASKYAQEAjwIAIZkBIACMAgAhmgFAAI0CACERAgAAmgIAIAUAAJsCACAIAACcAgAgCgAAnQIAIHkBAIoCACGAAQEAjwIAIYEBAQCPAgAhhAFAAJECACGFAUAAkQIAIZEBAQCKAgAhkgEBAIoCACGTAQEAjwIAIZUBAACYApUBIpcBAACZApcBIpgBAQCPAgAhmQEgAIwCACGaAUAAjQIAIRECAAD5AgAgBQAA-gIAIAoAAPwCACALAAD9AgAgeQEAAAABgAEBAAAAAYEBAQAAAAGEAUAAAAABhQFAAAAAAZEBAQAAAAGSAQEAAAABkwEBAAAAAZUBAAAAlQEClwEAAACXAQKYAQEAAAABmQEgAAAAAZoBQAAAAAECAAAAdwAgGgAAogMAIAMAAAAUACAaAACiAwAgGwAApgMAIBMAAAAUACACAACaAgAgBQAAmwIAIAoAAJ0CACALAACeAgAgEwAApgMAIHkBAIoCACGAAQEAjwIAIYEBAQCPAgAhhAFAAJECACGFAUAAkQIAIZEBAQCKAgAhkgEBAIoCACGTAQEAjwIAIZUBAACYApUBIpcBAACZApcBIpgBAQCPAgAhmQEgAIwCACGaAUAAjQIAIRECAACaAgAgBQAAmwIAIAoAAJ0CACALAACeAgAgeQEAigIAIYABAQCPAgAhgQEBAI8CACGEAUAAkQIAIYUBQACRAgAhkQEBAIoCACGSAQEAigIAIZMBAQCPAgAhlQEAAJgClQEilwEAAJkClwEimAEBAI8CACGZASAAjAIAIZoBQACNAgAhB3kBAAAAAYQBQAAAAAGFAUAAAAABlwEAAAC0AQKyAQEAAAABtAEBAAAAAbUBQAAAAAERAgAA-QIAIAUAAPoCACAIAAD7AgAgCwAA_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-eAQlwnwEycaABA3KhAQNzogEJdKUBM3WmATk"
+  strings: JSON.parse('["where","user","donorProfile","orderBy","cursor","bloodRequests","request","donor","assignments","payer","payments","auditLogs","_count","requester","BloodRequest.findUnique","BloodRequest.findUniqueOrThrow","BloodRequest.findFirst","BloodRequest.findFirstOrThrow","BloodRequest.findMany","data","BloodRequest.createOne","BloodRequest.createMany","BloodRequest.createManyAndReturn","BloodRequest.updateOne","BloodRequest.updateMany","BloodRequest.updateManyAndReturn","create","update","BloodRequest.upsertOne","BloodRequest.deleteOne","BloodRequest.deleteMany","having","_avg","_sum","_min","_max","BloodRequest.groupBy","BloodRequest.aggregate","DonationAssignment.findUnique","DonationAssignment.findUniqueOrThrow","DonationAssignment.findFirst","DonationAssignment.findFirstOrThrow","DonationAssignment.findMany","DonationAssignment.createOne","DonationAssignment.createMany","DonationAssignment.createManyAndReturn","DonationAssignment.updateOne","DonationAssignment.updateMany","DonationAssignment.updateManyAndReturn","DonationAssignment.upsertOne","DonationAssignment.deleteOne","DonationAssignment.deleteMany","DonationAssignment.groupBy","DonationAssignment.aggregate","Payment.findUnique","Payment.findUniqueOrThrow","Payment.findFirst","Payment.findFirstOrThrow","Payment.findMany","Payment.createOne","Payment.createMany","Payment.createManyAndReturn","Payment.updateOne","Payment.updateMany","Payment.updateManyAndReturn","Payment.upsertOne","Payment.deleteOne","Payment.deleteMany","Payment.groupBy","Payment.aggregate","AuditLog.findUnique","AuditLog.findUniqueOrThrow","AuditLog.findFirst","AuditLog.findFirstOrThrow","AuditLog.findMany","AuditLog.createOne","AuditLog.createMany","AuditLog.createManyAndReturn","AuditLog.updateOne","AuditLog.updateMany","AuditLog.updateManyAndReturn","AuditLog.upsertOne","AuditLog.deleteOne","AuditLog.deleteMany","AuditLog.groupBy","AuditLog.aggregate","User.findUnique","User.findUniqueOrThrow","User.findFirst","User.findFirstOrThrow","User.findMany","User.createOne","User.createMany","User.createManyAndReturn","User.updateOne","User.updateMany","User.updateManyAndReturn","User.upsertOne","User.deleteOne","User.deleteMany","User.groupBy","User.aggregate","DonorProfile.findUnique","DonorProfile.findUniqueOrThrow","DonorProfile.findFirst","DonorProfile.findFirstOrThrow","DonorProfile.findMany","DonorProfile.createOne","DonorProfile.createMany","DonorProfile.createManyAndReturn","DonorProfile.updateOne","DonorProfile.updateMany","DonorProfile.updateManyAndReturn","DonorProfile.upsertOne","DonorProfile.deleteOne","DonorProfile.deleteMany","DonorProfile.groupBy","DonorProfile.aggregate","AND","OR","NOT","id","userId","BloodGroup","bloodGroup","isAvailable","lastDonationDate","totalDonations","phone","address","latitude","longitude","createdAt","updatedAt","equals","in","notIn","lt","lte","gt","gte","not","contains","startsWith","endsWith","name","email","password","Role","role","UserStatus","status","googleId","isDeleted","deletedAt","every","some","none","action","resource","resourceId","details","ipAddress","string_contains","string_starts_with","string_ends_with","array_starts_with","array_ends_with","array_contains","requestId","payerId","amount","amountMinor","currency","PaymentMethod","paymentMethod","paymentId","transactionId","PaymentStatus","paymentExecuteResponse","merchantInvoiceNumber","checkoutUrl","idempotencyKey","initiationFingerprint","failureReason","donorId","DonationStatus","notes","completedAt","requesterId","patientName","unitsNeeded","unitsFulfilled","hospitalName","hospitalAddress","contactNumber","UrgencyLevel","urgency","RequestStatus","payerId_idempotencyKey","requestId_donorId","is","isNot","connectOrCreate","upsert","createMany","set","disconnect","delete","connect","updateMany","deleteMany","increment","decrement","multiply","divide"]'),
+  graph: "wQM5YBgIAADYAQAgCgAA2QEAIA0AAMoBACB2AACBAgAwdwAABQAQeAAAgQIAMHkBAAAAAXwAAIICfCKCAQgA-gEAIYMBCAD6AQAhhAFAAMkBACGFAUAAyQEAIZcBAACEAscBIpkBIADEAQAhmgFAAMUBACG7AQEAxwEAIb0BAQDTAQAhvgEBANMBACG_AQIAxgEAIcABAgDGAQAhwQEBANMBACHCAQEA0wEAIcMBAQDTAQAhxQEAAIMCxQEiAQAAAAEAIBABAADKAQAgdgAAwgEAMHcAAAMAEHgAAMIBADB5AQDTAQAhegEA0wEAIXwAAMMBfCN9IADEAQAhfkAAxQEAIX8CAMYBACGAAQEAxwEAIYEBAQDHAQAhggEIAMgBACGDAQgAyAEAIYQBQADJAQAhhQFAAMkBACEBAAAAAwAgGAgAANgBACAKAADZAQAgDQAAygEAIHYAAIECADB3AAAFABB4AACBAgAweQEA0wEAIXwAAIICfCKCAQgA-gEAIYMBCAD6AQAhhAFAAMkBACGFAUAAyQEAIZcBAACEAscBIpkBIADEAQAhmgFAAMUBACG7AQEAxwEAIb0BAQDTAQAhvgEBANMBACG_AQIAxgEAIcABAgDGAQAhwQEBANMBACHCAQEA0wEAIcMBAQDTAQAhxQEAAIMCxQEiBQgAAIEDACAKAACCAwAgDQAAlQIAIJoBAACFAgAguwEAAIUCACADAAAABQAgAwAABgAwBAAAAQAgDQYAAP0BACAHAADKAQAgdgAA_wEAMHcAAAgAEHgAAP8BADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAACAArsBIqkBAQDTAQAhuQEBANMBACG7AQEAxwEAIbwBQADFAQAhBAYAAJgDACAHAACVAgAguwEAAIUCACC8AQAAhQIAIA4GAAD9AQAgBwAAygEAIHYAAP8BADB3AAAIABB4AAD_AQAweQEAAAABhAFAAMkBACGFAUAAyQEAIZcBAACAArsBIqkBAQDTAQAhuQEBANMBACG7AQEAxwEAIbwBQADFAQAhyAEAAP4BACADAAAACAAgAwAACQAwBAAACgAgFwYAAP0BACAJAADKAQAgdgAA-QEAMHcAAAwAEHgAAPkBADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAAD8AbMBIqkBAQDTAQAhqgEBANMBACGrAQgA-gEAIawBAgDGAQAhrQEBANMBACGvAQAA-wGvASKwAQEA0wEAIbEBAQDHAQAhswEAAPYBACC0AQEAxwEAIbUBAQDHAQAhtgEBAMcBACG3AQEAxwEAIbgBAQDHAQAhCQYAAJgDACAJAACVAgAgsQEAAIUCACCzAQAAhQIAILQBAACFAgAgtQEAAIUCACC2AQAAhQIAILcBAACFAgAguAEAAIUCACAYBgAA_QEAIAkAAMoBACB2AAD5AQAwdwAADAAQeAAA-QEAMHkBAAAAAYQBQADJAQAhhQFAAMkBACGXAQAA_AGzASKpAQEA0wEAIaoBAQDTAQAhqwEIAPoBACGsAQIAxgEAIa0BAQDTAQAhrwEAAPsBrwEisAEBAAAAAbEBAQDHAQAhswEAAPYBACC0AQEAAAABtQEBAMcBACG2AQEAxwEAIbcBAQDHAQAhuAEBAMcBACHHAQAA-AEAIAMAAAAMACADAAANADAEAAAOACAMAQAA9wEAIHYAAPUBADB3AAAQABB4AAD1AQAweQEA0wEAIXoBAMcBACGEAUAAyQEAIZ4BAQDTAQAhnwEBANMBACGgAQEAxwEAIaEBAAD2AQAgogEBAMcBACEFAQAAlQIAIHoAAIUCACCgAQAAhQIAIKEBAACFAgAgogEAAIUCACAMAQAA9wEAIHYAAPUBADB3AAAQABB4AAD1AQAweQEAAAABegEAxwEAIYQBQADJAQAhngEBANMBACGfAQEA0wEAIaABAQDHAQAhoQEAAPYBACCiAQEAxwEAIQMAAAAQACADAAARADAEAAASACAVAgAA1gEAIAUAANcBACAIAADYAQAgCgAA2QEAIAsAANoBACB2AADSAQAwdwAAFAAQeAAA0gEAMHkBANMBACGAAQEAxwEAIYEBAQDHAQAhhAFAAMkBACGFAUAAyQEAIZEBAQDTAQAhkgEBANMBACGTAQEAxwEAIZUBAADUAZUBIpcBAADVAZcBIpgBAQDHAQAhmQEgAMQBACGaAUAAxQEAIQEAAAAUACABAAAABQAgAQAAAAgAIAEAAAAMACABAAAAEAAgAwAAAAgAIAMAAAkAMAQAAAoAIAMAAAAMACADAAANADAEAAAOACABAAAACAAgAQAAAAwAIAEAAAABACADAAAABQAgAwAABgAwBAAAAQAgAwAAAAUAIAMAAAYAMAQAAAEAIAMAAAAFACADAAAGADAEAAABACAVCAAA8wIAIAoAAPQCACANAACXAwAgeQEAAAABfAAAAHwCggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAZcBAAAAxwECmQEgAAAAAZoBQAAAAAG7AQEAAAABvQEBAAAAAb4BAQAAAAG_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-wIAIAgAAPwCACAKAAD9AgAgCwAA_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_AgCsAQAhgAEBAK0BACGBAQEArQEAIYIBCACuAQAhgwEIAK4BACGEAUAArwEAIYUBQACvAQAhAwAAAAMAIAMAAKMBADAfAACkAQAgAwAAAAMAIAMAAJIBADAEAACPAQAgD3YAAKcBADB3AACkAQAQeAAApwEAMHkBAKgBACF6AQCoAQAhfAAAqQF8I30gAKoBACF-QACrAQAhfwIArAEAIYABAQCtAQAhgQEBAK0BACGCAQgArgEAIYMBCACuAQAhhAFAAK8BACGFAUAArwEAIQ4MAACxAQAgIgAAwQEAICMAAMEBACCGAQEAAAABhwEBAAAABIgBAQAAAASJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBAMABACGOAQEAAAABjwEBAAAAAZABAQAAAAEHDAAAtAEAICIAAL8BACAjAAC_AQAghgEAAAB8A4cBAAAAfAmIAQAAAHwJjQEAAL4BfCMFDAAAsQEAICIAAL0BACAjAAC9AQAghgEgAAAAAY0BIAC8AQAhCwwAALQBACAiAAC7AQAgIwAAuwEAIIYBQAAAAAGHAUAAAAAFiAFAAAAABYkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAugEAIQ0MAACxAQAgIAAAuQEAICEAALEBACAiAACxAQAgIwAAsQEAIIYBAgAAAAGHAQIAAAAEiAECAAAABIkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAuAEAIQ4MAAC0AQAgIgAAtwEAICMAALcBACCGAQEAAAABhwEBAAAABYgBAQAAAAWJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBALYBACGOAQEAAAABjwEBAAAAAZABAQAAAAENDAAAtAEAICAAALUBACAhAAC1AQAgIgAAtQEAICMAALUBACCGAQgAAAABhwEIAAAABYgBCAAAAAWJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALMBACELDAAAsQEAICIAALIBACAjAACyAQAghgFAAAAAAYcBQAAAAASIAUAAAAAEiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQACwAQAhCwwAALEBACAiAACyAQAgIwAAsgEAIIYBQAAAAAGHAUAAAAAEiAFAAAAABIkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAsAEAIQiGAQIAAAABhwECAAAABIgBAgAAAASJAQIAAAABigECAAAAAYsBAgAAAAGMAQIAAAABjQECALEBACEIhgFAAAAAAYcBQAAAAASIAUAAAAAEiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQACyAQAhDQwAALQBACAgAAC1AQAgIQAAtQEAICIAALUBACAjAAC1AQAghgEIAAAAAYcBCAAAAAWIAQgAAAAFiQEIAAAAAYoBCAAAAAGLAQgAAAABjAEIAAAAAY0BCACzAQAhCIYBAgAAAAGHAQIAAAAFiAECAAAABYkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAtAEAIQiGAQgAAAABhwEIAAAABYgBCAAAAAWJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALUBACEODAAAtAEAICIAALcBACAjAAC3AQAghgEBAAAAAYcBAQAAAAWIAQEAAAAFiQEBAAAAAYoBAQAAAAGLAQEAAAABjAEBAAAAAY0BAQC2AQAhjgEBAAAAAY8BAQAAAAGQAQEAAAABC4YBAQAAAAGHAQEAAAAFiAEBAAAABYkBAQAAAAGKAQEAAAABiwEBAAAAAYwBAQAAAAGNAQEAtwEAIY4BAQAAAAGPAQEAAAABkAEBAAAAAQ0MAACxAQAgIAAAuQEAICEAALEBACAiAACxAQAgIwAAsQEAIIYBAgAAAAGHAQIAAAAEiAECAAAABIkBAgAAAAGKAQIAAAABiwECAAAAAYwBAgAAAAGNAQIAuAEAIQiGAQgAAAABhwEIAAAABIgBCAAAAASJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALkBACELDAAAtAEAICIAALsBACAjAAC7AQAghgFAAAAAAYcBQAAAAAWIAUAAAAAFiQFAAAAAAYoBQAAAAAGLAUAAAAABjAFAAAAAAY0BQAC6AQAhCIYBQAAAAAGHAUAAAAAFiAFAAAAABYkBQAAAAAGKAUAAAAABiwFAAAAAAYwBQAAAAAGNAUAAuwEAIQUMAACxAQAgIgAAvQEAICMAAL0BACCGASAAAAABjQEgALwBACEChgEgAAAAAY0BIAC9AQAhBwwAALQBACAiAAC_AQAgIwAAvwEAIIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC-AXwjBIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC_AXwjDgwAALEBACAiAADBAQAgIwAAwQEAIIYBAQAAAAGHAQEAAAAEiAEBAAAABIkBAQAAAAGKAQEAAAABiwEBAAAAAYwBAQAAAAGNAQEAwAEAIY4BAQAAAAGPAQEAAAABkAEBAAAAAQuGAQEAAAABhwEBAAAABIgBAQAAAASJAQEAAAABigEBAAAAAYsBAQAAAAGMAQEAAAABjQEBAMEBACGOAQEAAAABjwEBAAAAAZABAQAAAAEQAQAAygEAIHYAAMIBADB3AAADABB4AADCAQAweQEA0wEAIXoBANMBACF8AADDAXwjfSAAxAEAIX5AAMUBACF_AgDGAQAhgAEBAMcBACGBAQEAxwEAIYIBCADIAQAhgwEIAMgBACGEAUAAyQEAIYUBQADJAQAhBIYBAAAAfAOHAQAAAHwJiAEAAAB8CY0BAAC_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_AGzASKpAQEA0wEAIaoBAQDTAQAhqwEIAPoBACGsAQIAxgEAIa0BAQDTAQAhrwEAAPsBrwEisAEBANMBACGxAQEAxwEAIbMBAAD2AQAgtAEBAMcBACG1AQEAxwEAIbYBAQDHAQAhtwEBAMcBACG4AQEAxwEAIQiGAQgAAAABhwEIAAAABIgBCAAAAASJAQgAAAABigEIAAAAAYsBCAAAAAGMAQgAAAABjQEIALkBACEEhgEAAACvAQKHAQAAAK8BCIgBAAAArwEIjQEAAOUBrwEiBIYBAAAAswEChwEAAACzAQiIAQAAALMBCI0BAADjAbMBIhoIAADYAQAgCgAA2QEAIA0AAMoBACB2AACBAgAwdwAABQAQeAAAgQIAMHkBANMBACF8AACCAnwiggEIAPoBACGDAQgA-gEAIYQBQADJAQAhhQFAAMkBACGXAQAAhALHASKZASAAxAEAIZoBQADFAQAhuwEBAMcBACG9AQEA0wEAIb4BAQDTAQAhvwECAMYBACHAAQIAxgEAIcEBAQDTAQAhwgEBANMBACHDAQEA0wEAIcUBAACDAsUBIskBAAAFACDKAQAABQAgAqkBAQAAAAG5AQEAAAABDQYAAP0BACAHAADKAQAgdgAA_wEAMHcAAAgAEHgAAP8BADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAACAArsBIqkBAQDTAQAhuQEBANMBACG7AQEAxwEAIbwBQADFAQAhBIYBAAAAuwEChwEAAAC7AQiIAQAAALsBCI0BAADqAbsBIhgIAADYAQAgCgAA2QEAIA0AAMoBACB2AACBAgAwdwAABQAQeAAAgQIAMHkBANMBACF8AACCAnwiggEIAPoBACGDAQgA-gEAIYQBQADJAQAhhQFAAMkBACGXAQAAhALHASKZASAAxAEAIZoBQADFAQAhuwEBAMcBACG9AQEA0wEAIb4BAQDTAQAhvwECAMYBACHAAQIAxgEAIcEBAQDTAQAhwgEBANMBACHDAQEA0wEAIcUBAACDAsUBIgSGAQAAAHwChwEAAAB8CIgBAAAAfAiNAQAA9AF8IgSGAQAAAMUBAocBAAAAxQEIiAEAAADFAQiNAQAA8gHFASIEhgEAAADHAQKHAQAAAMcBCIgBAAAAxwEIjQEAAPABxwEiAAAAAAAAAc4BAQAAAAEBzgEAAAB8AwHOASAAAAABAc4BQAAAAAEFzgECAAAAAdQBAgAAAAHVAQIAAAAB1gECAAAAAdcBAgAAAAEBzgEBAAAAAQXOAQgAAAAB1AEIAAAAAdUBCAAAAAHWAQgAAAAB1wEIAAAAAQHOAUAAAAABBRoAAL0DACAbAADAAwAgywEAAL4DACDMAQAAvwMAINEBAAB3ACADGgAAvQMAIMsBAAC-AwAg0QEAAHcAIAoCAAD_AgAgBQAAgAMAIAgAAIEDACAKAACCAwAgCwAAgwMAIIABAACFAgAggQEAAIUCACCTAQAAhQIAIJgBAACFAgAgmgEAAIUCACAAAAABzgEAAACVAQIBzgEAAACXAQIHGgAA9QIAIBsAAPgCACDLAQAA9gIAIMwBAAD3AgAgzwEAAAMAINABAAADACDRAQAAjwEAIAsaAADMAgAwGwAA0QIAMMsBAADNAgAwzAEAAM4CADDNAQAAzwIAIM4BAADQAgAwzwEAANACADDQAQAA0AIAMNEBAADQAgAw0gEAANICADDTAQAA0wIAMAsaAAC9AgAwGwAAwgIAMMsBAAC-AgAwzAEAAL8CADDNAQAAwAIAIM4BAADBAgAwzwEAAMECADDQAQAAwQIAMNEBAADBAgAw0gEAAMMCADDTAQAAxAIAMAsaAACsAgAwGwAAsQIAMMsBAACtAgAwzAEAAK4CADDNAQAArwIAIM4BAACwAgAwzwEAALACADDQAQAAsAIAMNEBAACwAgAw0gEAALICADDTAQAAswIAMAsaAACgAgAwGwAApQIAMMsBAAChAgAwzAEAAKICADDNAQAAowIAIM4BAACkAgAwzwEAAKQCADDQAQAApAIAMNEBAACkAgAw0gEAAKYCADDTAQAApwIAMAd5AQAAAAGEAUAAAAABngEBAAAAAZ8BAQAAAAGgAQEAAAABoQGAAAAAAaIBAQAAAAECAAAAEgAgGgAAqwIAIAMAAAASACAaAACrAgAgGwAAqgIAIAETAAC8AwAwDAEAAPcBACB2AAD1AQAwdwAAEAAQeAAA9QEAMHkBAAAAAXoBAMcBACGEAUAAyQEAIZ4BAQDTAQAhnwEBANMBACGgAQEAxwEAIaEBAAD2AQAgogEBAMcBACECAAAAEgAgEwAAqgIAIAIAAACoAgAgEwAAqQIAIAt2AACnAgAwdwAAqAIAEHgAAKcCADB5AQDTAQAhegEAxwEAIYQBQADJAQAhngEBANMBACGfAQEA0wEAIaABAQDHAQAhoQEAAPYBACCiAQEAxwEAIQt2AACnAgAwdwAAqAIAEHgAAKcCADB5AQDTAQAhegEAxwEAIYQBQADJAQAhngEBANMBACGfAQEA0wEAIaABAQDHAQAhoQEAAPYBACCiAQEAxwEAIQd5AQCLAgAhhAFAAJICACGeAQEAiwIAIZ8BAQCLAgAhoAEBAJACACGhAYAAAAABogEBAJACACEHeQEAiwIAIYQBQACSAgAhngEBAIsCACGfAQEAiwIAIaABAQCQAgAhoQGAAAAAAaIBAQCQAgAhB3kBAAAAAYQBQAAAAAGeAQEAAAABnwEBAAAAAaABAQAAAAGhAYAAAAABogEBAAAAARIGAAC8AgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALMBAqkBAQAAAAGrAQgAAAABrAECAAAAAa0BAQAAAAGvAQAAAK8BArABAQAAAAGxAQEAAAABswGAAAAAAbQBAQAAAAG1AQEAAAABtgEBAAAAAbcBAQAAAAG4AQEAAAABAgAAAA4AIBoAALsCACADAAAADgAgGgAAuwIAIBsAALkCACABEwAAuwMAMBgGAAD9AQAgCQAAygEAIHYAAPkBADB3AAAMABB4AAD5AQAweQEAAAABhAFAAMkBACGFAUAAyQEAIZcBAAD8AbMBIqkBAQDTAQAhqgEBANMBACGrAQgA-gEAIawBAgDGAQAhrQEBANMBACGvAQAA-wGvASKwAQEAAAABsQEBAMcBACGzAQAA9gEAILQBAQAAAAG1AQEAxwEAIbYBAQDHAQAhtwEBAMcBACG4AQEAxwEAIccBAAD4AQAgAgAAAA4AIBMAALkCACACAAAAtAIAIBMAALUCACAVdgAAswIAMHcAALQCABB4AACzAgAweQEA0wEAIYQBQADJAQAhhQFAAMkBACGXAQAA_AGzASKpAQEA0wEAIaoBAQDTAQAhqwEIAPoBACGsAQIAxgEAIa0BAQDTAQAhrwEAAPsBrwEisAEBANMBACGxAQEAxwEAIbMBAAD2AQAgtAEBAMcBACG1AQEAxwEAIbYBAQDHAQAhtwEBAMcBACG4AQEAxwEAIRV2AACzAgAwdwAAtAIAEHgAALMCADB5AQDTAQAhhAFAAMkBACGFAUAAyQEAIZcBAAD8AbMBIqkBAQDTAQAhqgEBANMBACGrAQgA-gEAIawBAgDGAQAhrQEBANMBACGvAQAA-wGvASKwAQEA0wEAIbEBAQDHAQAhswEAAPYBACC0AQEAxwEAIbUBAQDHAQAhtgEBAMcBACG3AQEAxwEAIbgBAQDHAQAhEXkBAIsCACGEAUAAkgIAIYUBQACSAgAhlwEAALgCswEiqQEBAIsCACGrAQgAtgIAIawBAgCPAgAhrQEBAIsCACGvAQAAtwKvASKwAQEAiwIAIbEBAQCQAgAhswGAAAAAAbQBAQCQAgAhtQEBAJACACG2AQEAkAIAIbcBAQCQAgAhuAEBAJACACEFzgEIAAAAAdQBCAAAAAHVAQgAAAAB1gEIAAAAAdcBCAAAAAEBzgEAAACvAQIBzgEAAACzAQISBgAAugIAIHkBAIsCACGEAUAAkgIAIYUBQACSAgAhlwEAALgCswEiqQEBAIsCACGrAQgAtgIAIawBAgCPAgAhrQEBAIsCACGvAQAAtwKvASKwAQEAiwIAIbEBAQCQAgAhswGAAAAAAbQBAQCQAgAhtQEBAJACACG2AQEAkAIAIbcBAQCQAgAhuAEBAJACACEFGgAAtgMAIBsAALkDACDLAQAAtwMAIMwBAAC4AwAg0QEAAAEAIBIGAAC8AgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALMBAqkBAQAAAAGrAQgAAAABrAECAAAAAa0BAQAAAAGvAQAAAK8BArABAQAAAAGxAQEAAAABswGAAAAAAbQBAQAAAAG1AQEAAAABtgEBAAAAAbcBAQAAAAG4AQEAAAABAxoAALYDACDLAQAAtwMAINEBAAABACAIBgAAywIAIHkBAAAAAYQBQAAAAAGFAUAAAAABlwEAAAC7AQKpAQEAAAABuwEBAAAAAbwBQAAAAAECAAAACgAgGgAAygIAIAMAAAAKACAaAADKAgAgGwAAyAIAIAETAAC1AwAwDgYAAP0BACAHAADKAQAgdgAA_wEAMHcAAAgAEHgAAP8BADB5AQAAAAGEAUAAyQEAIYUBQADJAQAhlwEAAIACuwEiqQEBANMBACG5AQEA0wEAIbsBAQDHAQAhvAFAAMUBACHIAQAA_gEAIAIAAAAKACATAADIAgAgAgAAAMUCACATAADGAgAgC3YAAMQCADB3AADFAgAQeAAAxAIAMHkBANMBACGEAUAAyQEAIYUBQADJAQAhlwEAAIACuwEiqQEBANMBACG5AQEA0wEAIbsBAQDHAQAhvAFAAMUBACELdgAAxAIAMHcAAMUCABB4AADEAgAweQEA0wEAIYQBQADJAQAhhQFAAMkBACGXAQAAgAK7ASKpAQEA0wEAIbkBAQDTAQAhuwEBAMcBACG8AUAAxQEAIQd5AQCLAgAhhAFAAJICACGFAUAAkgIAIZcBAADHArsBIqkBAQCLAgAhuwEBAJACACG8AUAAjgIAIQHOAQAAALsBAggGAADJAgAgeQEAiwIAIYQBQACSAgAhhQFAAJICACGXAQAAxwK7ASKpAQEAiwIAIbsBAQCQAgAhvAFAAI4CACEFGgAAsAMAIBsAALMDACDLAQAAsQMAIMwBAACyAwAg0QEAAAEAIAgGAADLAgAgeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALsBAqkBAQAAAAG7AQEAAAABvAFAAAAAAQMaAACwAwAgywEAALEDACDRAQAAAQAgEwgAAPMCACAKAAD0AgAgeQEAAAABfAAAAHwCggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAZcBAAAAxwECmQEgAAAAAZoBQAAAAAG7AQEAAAABvgEBAAAAAb8BAgAAAAHAAQIAAAABwQEBAAAAAcIBAQAAAAHDAQEAAAABxQEAAADFAQICAAAAAQAgGgAA8gIAIAMAAAABACAaAADyAgAgGwAA2QIAIAETAACvAwAwGAgAANgBACAKAADZAQAgDQAAygEAIHYAAIECADB3AAAFABB4AACBAgAweQEAAAABfAAAggJ8IoIBCAD6AQAhgwEIAPoBACGEAUAAyQEAIYUBQADJAQAhlwEAAIQCxwEimQEgAMQBACGaAUAAxQEAIbsBAQDHAQAhvQEBANMBACG-AQEA0wEAIb8BAgDGAQAhwAECAMYBACHBAQEA0wEAIcIBAQDTAQAhwwEBANMBACHFAQAAgwLFASICAAAAAQAgEwAA2QIAIAIAAADUAgAgEwAA1QIAIBV2AADTAgAwdwAA1AIAEHgAANMCADB5AQDTAQAhfAAAggJ8IoIBCAD6AQAhgwEIAPoBACGEAUAAyQEAIYUBQADJAQAhlwEAAIQCxwEimQEgAMQBACGaAUAAxQEAIbsBAQDHAQAhvQEBANMBACG-AQEA0wEAIb8BAgDGAQAhwAECAMYBACHBAQEA0wEAIcIBAQDTAQAhwwEBANMBACHFAQAAgwLFASIVdgAA0wIAMHcAANQCABB4AADTAgAweQEA0wEAIXwAAIICfCKCAQgA-gEAIYMBCAD6AQAhhAFAAMkBACGFAUAAyQEAIZcBAACEAscBIpkBIADEAQAhmgFAAMUBACG7AQEAxwEAIb0BAQDTAQAhvgEBANMBACG_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-gIAIAgAAPwCACAKAAD9AgAgCwAA_gIAIHkBAAAAAYABAQAAAAGBAQEAAAABhAFAAAAAAYUBQAAAAAGRAQEAAAABkgEBAAAAAZMBAQAAAAGVAQAAAJUBApcBAAAAlwECmAEBAAAAAZkBIAAAAAGaAUAAAAABAgAAAHcAIBoAAJkDACADAAAAFAAgGgAAmQMAIBsAAJ0DACATAAAAFAAgAgAAmwIAIAgAAJ0CACAKAACeAgAgCwAAnwIAIBMAAJ0DACB5AQCLAgAhgAEBAJACACGBAQEAkAIAIYQBQACSAgAhhQFAAJICACGRAQEAiwIAIZIBAQCLAgAhkwEBAJACACGVAQAAmQKVASKXAQAAmgKXASKYAQEAkAIAIZkBIACNAgAhmgFAAI4CACERAgAAmwIAIAgAAJ0CACAKAACeAgAgCwAAnwIAIHkBAIsCACGAAQEAkAIAIYEBAQCQAgAhhAFAAJICACGFAUAAkgIAIZEBAQCLAgAhkgEBAIsCACGTAQEAkAIAIZUBAACZApUBIpcBAACaApcBIpgBAQCQAgAhmQEgAI0CACGaAUAAjgIAIRECAAD6AgAgBQAA-wIAIAgAAPwCACAKAAD9AgAgeQEAAAABgAEBAAAAAYEBAQAAAAGEAUAAAAABhQFAAAAAAZEBAQAAAAGSAQEAAAABkwEBAAAAAZUBAAAAlQEClwEAAACXAQKYAQEAAAABmQEgAAAAAZoBQAAAAAECAAAAdwAgGgAAngMAIAMAAAAUACAaAACeAwAgGwAAogMAIBMAAAAUACACAACbAgAgBQAAnAIAIAgAAJ0CACAKAACeAgAgEwAAogMAIHkBAIsCACGAAQEAkAIAIYEBAQCQAgAhhAFAAJICACGFAUAAkgIAIZEBAQCLAgAhkgEBAIsCACGTAQEAkAIAIZUBAACZApUBIpcBAACaApcBIpgBAQCQAgAhmQEgAI0CACGaAUAAjgIAIRECAACbAgAgBQAAnAIAIAgAAJ0CACAKAACeAgAgeQEAiwIAIYABAQCQAgAhgQEBAJACACGEAUAAkgIAIYUBQACSAgAhkQEBAIsCACGSAQEAiwIAIZMBAQCQAgAhlQEAAJkClQEilwEAAJoClwEimAEBAJACACGZASAAjQIAIZoBQACOAgAhEQIAAPoCACAFAAD7AgAgCgAA_QIAIAsAAP4CACB5AQAAAAGAAQEAAAABgQEBAAAAAYQBQAAAAAGFAUAAAAABkQEBAAAAAZIBAQAAAAGTAQEAAAABlQEAAACVAQKXAQAAAJcBApgBAQAAAAGZASAAAAABmgFAAAAAAQIAAAB3ACAaAACjAwAgAwAAABQAIBoAAKMDACAbAACnAwAgEwAAABQAIAIAAJsCACAFAACcAgAgCgAAngIAIAsAAJ8CACATAACnAwAgeQEAiwIAIYABAQCQAgAhgQEBAJACACGEAUAAkgIAIYUBQACSAgAhkQEBAIsCACGSAQEAiwIAIZMBAQCQAgAhlQEAAJkClQEilwEAAJoClwEimAEBAJACACGZASAAjQIAIZoBQACOAgAhEQIAAJsCACAFAACcAgAgCgAAngIAIAsAAJ8CACB5AQCLAgAhgAEBAJACACGBAQEAkAIAIYQBQACSAgAhhQFAAJICACGRAQEAiwIAIZIBAQCLAgAhkwEBAJACACGVAQAAmQKVASKXAQAAmgKXASKYAQEAkAIAIZkBIACNAgAhmgFAAI4CACEHeQEAAAABhAFAAAAAAYUBQAAAAAGXAQAAALsBArkBAQAAAAG7AQEAAAABvAFAAAAAARECAAD6AgAgBQAA-wIAIAgAAPwCACALAAD-AgAgeQEAAAABgAEBAAAAAYEBAQAAAAGEAUAAAAABhQFAAAAAAZEBAQAAAAGSAQEAAAABkwEBAAAAAZUBAAAAlQEClwEAAACXAQKYAQEAAAABmQEgAAAAAZoBQAAAAAECAAAAdwAgGgAAqQMAIAMAAAAUACAaAACpAwAgGwAArQMAIBMAAAAUACACAACbAgAgBQAAnAIAIAgAAJ0CACALAACfAgAgEwAArQMAIHkBAIsCACGAAQEAkAIAIYEBAQCQAgAhhAFAAJICACGFAUAAkgIAIZEBAQCLAgAhkgEBAIsCACGTAQEAkAIAIZUBAACZApUBIpcBAACaApcBIpgBAQCQAgAhmQEgAI0CACGaAUAAjgIAIRECAACbAgAgBQAAnAIAIAgAAJ0CACALAACfAgAgeQEAiwIAIYABAQCQAgAhgQEBAJACACGEAUAAkgIAIYUBQACSAgAhkQEBAIsCACGSAQEAiwIAIZMBAQCQAgAhlQEAAJkClQEilwEAAJoClwEimAEBAJACACGZASAAjQIAIZoBQACOAgAhEXkBAAAAAYQBQAAAAAGFAUAAAAABlwEAAACzAQKqAQEAAAABqwEIAAAAAawBAgAAAAGtAQEAAAABrwEAAACvAQKwAQEAAAABsQEBAAAAAbMBgAAAAAG0AQEAAAABtQEBAAAAAbYBAQAAAAG3AQEAAAABuAEBAAAAARF5AQAAAAF8AAAAfAKCAQgAAAABgwEIAAAAAYQBQAAAAAGFAUAAAAABlwEAAADHAQKZASAAAAABmgFAAAAAAbsBAQAAAAG-AQEAAAABvwECAAAAAcABAgAAAAHBAQEAAAABwgEBAAAAAcMBAQAAAAHFAQAAAMUBAhQKAAD0AgAgDQAAlwMAIHkBAAAAAXwAAAB8AoIBCAAAAAGDAQgAAAABhAFAAAAAAYUBQAAAAAGXAQAAAMcBApkBIAAAAAGaAUAAAAABuwEBAAAAAb0BAQAAAAG-AQEAAAABvwECAAAAAcABAgAAAAHBAQEAAAABwgEBAAAAAcMBAQAAAAHFAQAAAMUBAgIAAAABACAaAACwAwAgAwAAAAUAIBoAALADACAbAAC0AwAgFgAAAAUAIAoAANsCACANAACWAwAgEwAAtAMAIHkBAIsCACF8AADWAnwiggEIALYCACGDAQgAtgIAIYQBQACSAgAhhQFAAJICACGXAQAA2ALHASKZASAAjQIAIZoBQACOAgAhuwEBAJACACG9AQEAiwIAIb4BAQCLAgAhvwECAI8CACHAAQIAjwIAIcEBAQCLAgAhwgEBAIsCACHDAQEAiwIAIcUBAADXAsUBIhQKAADbAgAgDQAAlgMAIHkBAIsCACF8AADWAnwiggEIALYCACGDAQgAtgIAIYQBQACSAgAhhQFAAJICACGXAQAA2ALHASKZASAAjQIAIZoBQACOAgAhuwEBAJACACG9AQEAiwIAIb4BAQCLAgAhvwECAI8CACHAAQIAjwIAIcEBAQCLAgAhwgEBAIsCACHDAQEAiwIAIcUBAADXAsUBIgd5AQAAAAGEAUAAAAABhQFAAAAAAZcBAAAAuwECqQEBAAAAAbsBAQAAAAG8AUAAAAABFAgAAPMCACANAACXAwAgeQEAAAABfAAAAHwCggEIAAAAAYMBCAAAAAGEAUAAAAABhQFAAAAAAZcBAAAAxwECmQEgAAAAAZoBQAAAAAG7AQEAAAABvQEBAAAAAb4BAQAAAAG_AQIAAAABwAECAAAAAcEBAQAAAAHCAQEAAAABwwEBAAAAAcUBAAAAxQECAgAAAAEAIBoAALYDACADAAAABQAgGgAAtgMAIBsAALoDACAWAAAABQAgCAAA2gIAIA0AAJYDACATAAC6AwAgeQEAiwIAIXwAANYCfCKCAQgAtgIAIYMBCAC2AgAhhAFAAJICACGFAUAAkgIAIZcBAADYAscBIpkBIACNAgAhmgFAAI4CACG7AQEAkAIAIb0BAQCLAgAhvgEBAIsCACG_AQIAjwIAIcABAgCPAgAhwQEBAIsCACHCAQEAiwIAIcMBAQCLAgAhxQEAANcCxQEiFAgAANoCACANAACWAwAgeQEAiwIAIXwAANYCfCKCAQgAtgIAIYMBCAC2AgAhhAFAAJICACGFAUAAkgIAIZcBAADYAscBIpkBIACNAgAhmgFAAI4CACG7AQEAkAIAIb0BAQCLAgAhvgEBAIsCACG_AQIAjwIAIcABAgCPAgAhwQEBAIsCACHCAQEAiwIAIcMBAQCLAgAhxQEAANcCxQEiEXkBAAAAAYQBQAAAAAGFAUAAAAABlwEAAACzAQKpAQEAAAABqwEIAAAAAawBAgAAAAGtAQEAAAABrwEAAACvAQKwAQEAAAABsQEBAAAAAbMBgAAAAAG0AQEAAAABtQEBAAAAAbYBAQAAAAG3AQEAAAABuAEBAAAAAQd5AQAAAAGEAUAAAAABngEBAAAAAZ8BAQAAAAGgAQEAAAABoQGAAAAAAaIBAQAAAAERBQAA-wIAIAgAAPwCACAKAAD9AgAgCwAA_gIAIHkBAAAAAYABAQAAAAGBAQEAAAABhAFAAAAAAYUBQAAAAAGRAQEAAAABkgEBAAAAAZMBAQAAAAGVAQAAAJUBApcBAAAAlwECmAEBAAAAAZkBIAAAAAGaAUAAAAABAgAAAHcAIBoAAL0DACADAAAAFAAgGgAAvQMAIBsAAMEDACATAAAAFAAgBQAAnAIAIAgAAJ0CACAKAACeAgAgCwAAnwIAIBMAAMEDACB5AQCLAgAhgAEBAJACACGBAQEAkAIAIYQBQACSAgAhhQFAAJICACGRAQEAiwIAIZIBAQCLAgAhkwEBAJACACGVAQAAmQKVASKXAQAAmgKXASKYAQEAkAIAIZkBIACNAgAhmgFAAI4CACERBQAAnAIAIAgAAJ0CACAKAACeAgAgCwAAnwIAIHkBAIsCACGAAQEAkAIAIYEBAQCQAgAhhAFAAJICACGFAUAAkgIAIZEBAQCLAgAhkgEBAIsCACGTAQEAkAIAIZUBAACZApUBIpcBAACaApcBIpgBAQCQAgAhmQEgAI0CACGaAUAAjgIAIQQIGgQKGwUMAAgNAAIGAgQDBQcBCAsECg8FCxMGDAAHAQEAAgIGAAEHAAICBgABCQACAQEVAgQFFgAIFwAKGAALGQACCBwACh0AAAENAAIBDQACBQwADSAADiEADyIAECMAEQAAAAAABQwADSAADiEADyIAECMAEQIGAAEHAAICBgABBwACAwwAFiIAFyMAGAAAAAMMABYiABcjABgCBgABCQACAgYAAQkAAgUMAB0gAB4hAB8iACAjACEAAAAAAAUMAB0gAB4hAB8iACAjACEBAWkCAQFvAgMMACYiACcjACgAAAADDAAmIgAnIwAoAAADDAAtIgAuIwAvAAAAAwwALSIALiMALwEBAAIBAQACBQwANCAANSEANiIANyMAOAAAAAAABQwANCAANSEANiIANyMAOA4CAQ8eARAfAREgARIhARQjARUlCRYmChcoARgqCRkrCxwsAR0tAR4uCSQxDCUyEiYzBCc0BCg1BCk2BCo3BCs5BCw7CS08Ey4-BC9ACTBBFDFCBDJDBDNECTRHFTVIGTZJBTdKBThLBTlMBTpNBTtPBTxRCT1SGj5UBT9WCUBXG0FYBUJZBUNaCURdHEVeIkZfBkdgBkhhBkliBkpjBktlBkxnCU1oI05rBk9tCVBuJFFwBlJxBlNyCVR1JVV2KVZ4Ald5Alh7All8Alp9Alt_AlyBAQldggEqXoQBAl-GAQlghwErYYgBAmKJAQJjigEJZI0BLGWOATBmkAEDZ5EBA2iTAQNplAEDapUBA2uXAQNsmQEJbZoBMW6cAQNvngEJcJ8BMnGgAQNyoQEDc6IBCXSlATN1pgE5"
 };
 async function decodeBase64AsWasm(wasmBase64) {
   const { Buffer: Buffer2 } = await import("buffer");
@@ -198,11 +199,18 @@ var PaymentScalarFieldEnum = {
   requestId: "requestId",
   payerId: "payerId",
   amount: "amount",
+  amountMinor: "amountMinor",
+  currency: "currency",
   paymentMethod: "paymentMethod",
   paymentId: "paymentId",
   transactionId: "transactionId",
   status: "status",
   paymentExecuteResponse: "paymentExecuteResponse",
+  merchantInvoiceNumber: "merchantInvoiceNumber",
+  checkoutUrl: "checkoutUrl",
+  idempotencyKey: "idempotencyKey",
+  initiationFingerprint: "initiationFingerprint",
+  failureReason: "failureReason",
   createdAt: "createdAt",
   updatedAt: "updatedAt"
 };
@@ -585,7 +593,11 @@ var ADMIN_USER_SORT_FIELDS = [
   "role",
   "status"
 ];
-var AUDIT_LOG_SORT_FIELDS = ["createdAt", "action", "resource"];
+var AUDIT_LOG_SORT_FIELDS = [
+  "createdAt",
+  "action",
+  "resource"
+];
 var adminUsersQuerySchema = z.object({
   page: positiveInteger(1e6, 1),
   limit: positiveInteger(100, 10),
@@ -794,7 +806,10 @@ var updateUserStatus = async (adminUserId, targetUserId, payload, ipAddress) => 
     where: { id: targetUserId, isDeleted: false }
   });
   if (!targetUser) {
-    throw new AppError(httpStatus5.NOT_FOUND, "Target user not found or deleted");
+    throw new AppError(
+      httpStatus5.NOT_FOUND,
+      "Target user not found or deleted"
+    );
   }
   if (adminUserId === targetUserId && payload.status === UserStatus.BLOCKED) {
     throw new AppError(
@@ -1046,11 +1061,7 @@ var AdminValidation = {
 
 // src/app/module/admin/admin.route.ts
 var router = Router();
-router.get(
-  "/users",
-  auth(Role.ADMIN),
-  AdminController.getAllUsers
-);
+router.get("/users", auth(Role.ADMIN), AdminController.getAllUsers);
 router.patch(
   "/users/:id/status",
   auth(Role.ADMIN),
@@ -1062,11 +1073,7 @@ router.get(
   auth(Role.ADMIN),
   AdminController.getDashboardStats
 );
-router.get(
-  "/audit-logs",
-  auth(Role.ADMIN),
-  AdminController.getAuditLogs
-);
+router.get("/audit-logs", auth(Role.ADMIN), AdminController.getAuditLogs);
 var AdminRoutes = router;
 
 // src/app/module/auth/auth.route.ts
@@ -2814,198 +2821,179 @@ import { Router as Router5 } from "express";
 import httpStatus15 from "http-status";
 
 // src/app/module/payment/payment.service.ts
+import { createHash, randomBytes } from "crypto";
 import httpStatus14 from "http-status";
 
+// src/app/utils/money.ts
+var MIN_AMOUNT_MINOR = 1e3;
+var MAX_AMOUNT_MINOR = 5e7;
+var DECIMAL = /^\d{1,9}(\.\d{1,2})?$/;
+var parseDecimalToMinor = (value) => {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  const text2 = String(value).trim();
+  if (!DECIMAL.test(text2)) return null;
+  const [whole, fraction = ""] = text2.split(".");
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (minor < MIN_AMOUNT_MINOR || minor > MAX_AMOUNT_MINOR) return null;
+  return minor;
+};
+var formatMinor = (minor) => {
+  const whole = Math.trunc(minor / 100);
+  const fraction = String(minor % 100).padStart(2, "0");
+  return `${whole}.${fraction}`;
+};
+
 // src/app/module/payment/bkash.client.ts
-import crypto from "crypto";
+var REQUEST_TIMEOUT_MS = 15e3;
+var SUCCESS_CODE = "0000";
+var BkashGatewayError = class extends Error {
+};
+var isBkashConfigured = () => Boolean(
+  config_default.bkash_app_key && config_default.bkash_app_secret && config_default.bkash_username && config_default.bkash_password && config_default.bkash_base_url && config_default.bkash_callback_url
+);
+var isTrustedCheckoutUrl = (value) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    let configuredHost = "";
+    try {
+      configuredHost = new URL(config_default.bkash_base_url).hostname.toLowerCase();
+    } catch {
+    }
+    if (configuredHost && host === configuredHost) return true;
+    if (url.protocol !== "https:") return false;
+    return host === "bka.sh" || host.endsWith(".bka.sh") || host === "bkash.com" || host.endsWith(".bkash.com");
+  } catch {
+    return false;
+  }
+};
 var BkashClientService = class {
   idToken = null;
   tokenExpiresAt = 0;
-  /**
-   * Retrieves a valid bKash id_token, using cached token if not expired.
-   */
+  async post(path3, init) {
+    let response;
+    try {
+      response = await fetch(`${config_default.bkash_base_url}${path3}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...init.headers },
+        body: JSON.stringify(init.body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+    } catch {
+      throw new BkashGatewayError("bKash gateway unreachable");
+    }
+    if (!response.ok) throw new BkashGatewayError(`bKash gateway returned HTTP ${response.status}`);
+    try {
+      return await response.json();
+    } catch {
+      throw new BkashGatewayError("bKash gateway returned a non-JSON response");
+    }
+  }
+  /** Retrieves a valid bKash id_token, reusing the cached one until shortly before expiry. */
   async getValidToken() {
     const now = Date.now();
-    if (this.idToken && now < this.tokenExpiresAt - 6e4) {
-      return this.idToken;
-    }
-    try {
-      const response = await fetch(
-        `${config_default.bkash_base_url}/tokenized/checkout/token/grant`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            username: config_default.bkash_username,
-            password: config_default.bkash_password
-          },
-          body: JSON.stringify({
-            app_key: config_default.bkash_app_key,
-            app_secret: config_default.bkash_app_secret
-          })
-        }
-      );
-      if (response.ok) {
-        const text2 = await response.text();
-        try {
-          const data = JSON.parse(text2);
-          if (data.id_token) {
-            this.idToken = data.id_token;
-            this.tokenExpiresAt = now + (data.expires_in || 3600) * 1e3;
-            return this.idToken;
-          }
-        } catch {
-        }
-      }
-    } catch {
-    }
-    const mockToken = `bkash_token_${crypto.randomBytes(16).toString("hex")}`;
-    this.idToken = mockToken;
-    this.tokenExpiresAt = now + 3600 * 1e3;
+    if (this.idToken && now < this.tokenExpiresAt - 6e4) return this.idToken;
+    const data = await this.post("/tokenized/checkout/token/grant", {
+      headers: {
+        username: config_default.bkash_username,
+        password: config_default.bkash_password
+      },
+      body: { app_key: config_default.bkash_app_key, app_secret: config_default.bkash_app_secret }
+    });
+    if (!data.id_token) throw new BkashGatewayError("bKash token grant was rejected");
+    this.idToken = data.id_token;
+    this.tokenExpiresAt = now + (data.expires_in || 3600) * 1e3;
     return this.idToken;
   }
-  /**
-   * Initiates a tokenized payment request on bKash.
-   */
-  async createPayment(params) {
+  async authorizedPost(path3, body) {
     const token = await this.getValidToken();
-    try {
-      const response = await fetch(
-        `${config_default.bkash_base_url}/tokenized/checkout/create`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: token,
-            "X-APP-Key": config_default.bkash_app_key
-          },
-          body: JSON.stringify({
-            mode: "0011",
-            payerReference: params.payerReference || "01700000000",
-            callbackURL: config_default.bkash_callback_url,
-            amount: params.amount.toFixed(2),
-            currency: "BDT",
-            intent: "sale",
-            merchantInvoiceNumber: params.invoiceNumber
-          })
-        }
-      );
-      if (response.ok) {
-        const text2 = await response.text();
-        try {
-          const data = JSON.parse(text2);
-          if (data.paymentID && data.bkashURL) {
-            return data;
-          }
-        } catch {
-        }
-      }
-    } catch {
-    }
-    const paymentID = `BKASH_${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
-    return {
-      statusCode: "0000",
-      statusMessage: "Successful",
-      paymentID,
-      bkashURL: `https://sandbox.payment.bka.sh/redirect/tokenized/?paymentID=${paymentID}`,
-      amount: params.amount.toFixed(2),
-      currency: "BDT",
-      paymentCreateTime: (/* @__PURE__ */ new Date()).toISOString(),
-      transactionStatus: "Initiated",
-      merchantInvoiceNumber: params.invoiceNumber
-    };
+    return this.post(path3, {
+      headers: { Authorization: token, "X-APP-Key": config_default.bkash_app_key },
+      body
+    });
   }
-  /**
-   * Executes an initiated payment on bKash.
-   */
-  async executePayment(paymentID) {
-    const token = await this.getValidToken();
-    try {
-      const response = await fetch(
-        `${config_default.bkash_base_url}/tokenized/checkout/execute`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: token,
-            "X-APP-Key": config_default.bkash_app_key
-          },
-          body: JSON.stringify({
-            paymentID
-          })
-        }
-      );
-      if (response.ok) {
-        const text2 = await response.text();
-        try {
-          const data = JSON.parse(text2);
-          if (data.trxID) {
-            return data;
-          }
-        } catch {
-        }
-      }
-    } catch {
-    }
-    const trxID = `TRX${crypto.randomBytes(5).toString("hex").toUpperCase()}`;
-    return {
-      statusCode: "0000",
-      statusMessage: "Successful",
-      paymentID,
-      trxID,
-      transactionStatus: "Completed",
-      amount: "100.00",
+  /** Creates a tokenized checkout. `amount` is a two-decimal BDT string such as "150.50". */
+  async createPayment(params) {
+    const data = await this.authorizedPost("/tokenized/checkout/create", {
+      mode: "0011",
+      payerReference: params.payerReference || "01700000000",
+      callbackURL: config_default.bkash_callback_url,
+      amount: params.amount,
       currency: "BDT",
       intent: "sale",
-      paymentExecuteTime: (/* @__PURE__ */ new Date()).toISOString(),
-      merchantInvoiceNumber: `INV_${paymentID}`,
-      customerMsisdn: "01700000000"
-    };
-  }
-  /**
-   * Queries payment transaction status from bKash.
-   */
-  async queryPayment(paymentID) {
-    const token = await this.getValidToken();
-    try {
-      const response = await fetch(
-        `${config_default.bkash_base_url}/tokenized/checkout/payment/status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: token,
-            "X-APP-Key": config_default.bkash_app_key
-          },
-          body: JSON.stringify({
-            paymentID
-          })
-        }
-      );
-      if (response.ok) {
-        const text2 = await response.text();
-        try {
-          const data = JSON.parse(text2);
-          return data;
-        } catch {
-        }
-      }
-    } catch {
+      merchantInvoiceNumber: params.invoiceNumber
+    });
+    if (data.statusCode !== SUCCESS_CODE || !data.paymentID || !data.bkashURL) {
+      throw new BkashGatewayError("bKash declined the checkout request");
     }
-    return {
-      statusCode: "0000",
-      statusMessage: "Successful",
-      paymentID,
-      transactionStatus: "Completed",
-      amount: "100.00",
-      currency: "BDT"
-    };
+    if (!isTrustedCheckoutUrl(data.bkashURL)) {
+      throw new BkashGatewayError("bKash returned an untrusted checkout URL");
+    }
+    return data;
+  }
+  /** Executes an initiated payment. Throws on any gateway failure; never fabricates success. */
+  async executePayment(paymentID) {
+    const data = await this.authorizedPost("/tokenized/checkout/execute", {
+      paymentID
+    });
+    if (data.statusCode !== SUCCESS_CODE || !data.trxID) {
+      throw new BkashGatewayError("bKash did not confirm the payment");
+    }
+    return data;
+  }
+  /** Queries payment status from bKash. Throws on any gateway failure. */
+  async queryPayment(paymentID) {
+    const data = await this.authorizedPost("/tokenized/checkout/payment/status", {
+      paymentID
+    });
+    if (!data.transactionStatus) throw new BkashGatewayError("bKash status response was incomplete");
+    return data;
   }
 };
 var BkashClient = new BkashClientService();
 
 // src/app/module/payment/payment.service.ts
-var initiateBkashPayment = async (payerId, payload, ipAddress) => {
+var RACE_ERROR_CODE = "P2002";
+var toPaymentSummary = (payment) => ({
+  id: payment.id,
+  requestId: payment.requestId,
+  status: payment.status,
+  paymentMethod: payment.paymentMethod,
+  currency: payment.currency,
+  amount: formatMinor(payment.amountMinor),
+  paymentId: payment.paymentId,
+  createdAt: payment.createdAt
+});
+var fingerprintOf = (requestId, amountMinor) => createHash("sha256").update(`${requestId}|${amountMinor}`).digest("hex");
+var initiateBkashPayment = async (payerId, payload, idempotencyKey, ipAddress) => {
+  const fingerprint = fingerprintOf(payload.requestId, payload.amountMinor);
+  const replay = async () => {
+    const existing = await prisma.payment.findUnique({
+      where: { payerId_idempotencyKey: { payerId, idempotencyKey } }
+    });
+    if (!existing) return null;
+    if (existing.initiationFingerprint !== fingerprint) {
+      throw new AppError(
+        httpStatus14.UNPROCESSABLE_ENTITY,
+        "This Idempotency-Key was already used with a different request or amount"
+      );
+    }
+    return {
+      replayed: true,
+      payment: toPaymentSummary(existing),
+      bkashURL: existing.status === PaymentStatus.PENDING ? existing.checkoutUrl : null
+    };
+  };
+  const replayed = await replay();
+  if (replayed) return replayed;
+  if (!isBkashConfigured()) {
+    throw new AppError(
+      httpStatus14.SERVICE_UNAVAILABLE,
+      "Payments are temporarily unavailable"
+    );
+  }
   const bloodRequest = await prisma.bloodRequest.findUnique({
     where: { id: payload.requestId, isDeleted: false }
   });
@@ -3018,65 +3006,94 @@ var initiateBkashPayment = async (payerId, payload, ipAddress) => {
       "Cannot initiate payment for a cancelled blood request"
     );
   }
-  const invoiceNumber = `INV-${Date.now()}-${Math.floor(Math.random() * 1e3)}`;
   const payer = await prisma.user.findUnique({
     where: { id: payerId },
     select: { phone: true }
   });
-  const cleanPhone = payer?.phone?.replace(/\D/g, "") || "01770618575";
-  const payerReference = cleanPhone.length === 11 ? cleanPhone : "01770618575";
-  const bkashResponse = await BkashClient.createPayment({
-    amount: payload.amount,
-    invoiceNumber,
-    payerReference
-  });
-  const payment = await prisma.payment.create({
-    data: {
-      requestId: payload.requestId,
-      payerId,
-      amount: payload.amount,
-      paymentMethod: PaymentMethod.BKASH,
-      paymentId: bkashResponse.paymentID,
-      status: PaymentStatus.PENDING
-    },
-    include: {
-      request: {
-        select: {
-          id: true,
-          patientName: true,
-          bloodGroup: true,
-          hospitalName: true
-        }
-      },
-      payer: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true
-        }
+  const cleanPhone = payer?.phone?.replace(/\D/g, "") || "";
+  const payerReference = cleanPhone.length === 11 ? cleanPhone : "01700000000";
+  const invoiceNumber = `INV-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  let attempt;
+  try {
+    attempt = await prisma.payment.create({
+      data: {
+        requestId: payload.requestId,
+        payerId,
+        amount: payload.amountMinor / 100,
+        amountMinor: payload.amountMinor,
+        currency: "BDT",
+        paymentMethod: PaymentMethod.BKASH,
+        paymentId: `PENDING-${randomBytes(16).toString("hex")}`,
+        merchantInvoiceNumber: invoiceNumber,
+        idempotencyKey,
+        initiationFingerprint: fingerprint,
+        status: PaymentStatus.PENDING
       }
+    });
+  } catch (error) {
+    if (error.code === RACE_ERROR_CODE) {
+      const raced = await replay();
+      if (raced) return raced;
     }
-  });
+    throw error;
+  }
   await prisma.auditLog.create({
     data: {
       userId: payerId,
       action: "PAYMENT_INITIATED",
       resource: "Payment",
-      resourceId: payment.id,
+      resourceId: attempt.id,
       details: {
-        paymentId: payment.paymentId,
-        amount: payment.amount,
-        requestId: payment.requestId,
-        merchantInvoiceNumber: bkashResponse.merchantInvoiceNumber
+        provider: "BKASH",
+        amountMinor: attempt.amountMinor,
+        currency: attempt.currency,
+        requestId: attempt.requestId,
+        merchantInvoiceNumber: invoiceNumber
       },
       ipAddress
     }
   });
-  return {
-    payment,
-    bkashURL: bkashResponse.bkashURL
-  };
+  try {
+    const bkashResponse = await BkashClient.createPayment({
+      amount: formatMinor(payload.amountMinor),
+      invoiceNumber,
+      payerReference
+    });
+    const updated = await prisma.payment.update({
+      where: { id: attempt.id },
+      data: {
+        paymentId: bkashResponse.paymentID,
+        checkoutUrl: bkashResponse.bkashURL
+      }
+    });
+    return {
+      replayed: false,
+      payment: toPaymentSummary(updated),
+      bkashURL: bkashResponse.bkashURL
+    };
+  } catch {
+    await prisma.payment.update({
+      where: { id: attempt.id },
+      data: {
+        status: PaymentStatus.FAILED,
+        failureReason: "Gateway could not create a checkout session"
+      }
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId: payerId,
+        action: "PAYMENT_FAILED",
+        resource: "Payment",
+        resourceId: attempt.id,
+        details: { stage: "initiation", reason: "gateway_error" },
+        ipAddress
+      }
+    });
+    throw new AppError(
+      httpStatus14.BAD_GATEWAY,
+      "The payment gateway could not start checkout. Please try again."
+    );
+  }
 };
 var handleBkashCallback = async (payload, ipAddress) => {
   const payment = await prisma.payment.findUnique({
@@ -3133,7 +3150,15 @@ var handleBkashCallback = async (payload, ipAddress) => {
   if (payment.status === PaymentStatus.COMPLETED) {
     return payment;
   }
-  const executeResponse = await BkashClient.executePayment(payload.paymentID);
+  let executeResponse;
+  try {
+    executeResponse = await BkashClient.executePayment(payload.paymentID);
+  } catch {
+    throw new AppError(
+      httpStatus14.BAD_GATEWAY,
+      "bKash could not confirm this payment yet"
+    );
+  }
   const completedPayment = await prisma.payment.update({
     where: { id: payment.id },
     data: {
@@ -3195,6 +3220,11 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
     where: {
       OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }]
     },
+    omit: {
+      idempotencyKey: true,
+      initiationFingerprint: true,
+      checkoutUrl: true
+    },
     include: {
       request: {
         select: {
@@ -3234,19 +3264,59 @@ var PaymentService = {
   getPaymentById
 };
 
+// src/app/module/payment/payment.validation.ts
+import { z as z9 } from "zod";
+var amountSchema = z9.union([z9.string(), z9.number()]).transform((value, ctx) => {
+  const minor = parseDecimalToMinor(value);
+  if (minor === null) {
+    ctx.addIssue({
+      code: "custom",
+      message: `Amount must be a BDT value with at most two decimals between ${formatMinor(MIN_AMOUNT_MINOR)} and ${formatMinor(MAX_AMOUNT_MINOR)}`
+    });
+    return z9.NEVER;
+  }
+  return minor;
+});
+var createPaymentSchema = z9.object({
+  body: z9.object({
+    requestId: z9.string().uuid("Valid blood request ID (UUID) is required"),
+    amount: amountSchema
+  }).strict().transform(({ requestId, amount }) => ({ requestId, amountMinor: amount }))
+});
+var idempotencyKeySchema = z9.string().regex(/^[A-Za-z0-9_-]{16,64}$/, "Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'");
+var bkashCallbackSchema = z9.object({
+  body: z9.object({
+    paymentID: z9.string().min(1, "paymentID is required"),
+    status: z9.string().optional()
+  })
+});
+var PaymentValidation = {
+  createPaymentSchema,
+  bkashCallbackSchema
+};
+
 // src/app/module/payment/payment.controller.ts
 var initiateBkashPayment2 = catchAsync(async (req, res) => {
   const payerId = req.user.userId;
-  const result = await PaymentService.initiateBkashPayment(
+  const key = idempotencyKeySchema.safeParse(req.get("idempotency-key"));
+  if (!key.success) {
+    throw new AppError(
+      httpStatus15.BAD_REQUEST,
+      "A valid Idempotency-Key header (16-64 characters: letters, digits, '-' or '_') is required"
+    );
+  }
+  const { replayed, ...data } = await PaymentService.initiateBkashPayment(
     payerId,
     req.body,
+    key.data,
     req.ip
   );
+  res.setHeader("Cache-Control", "no-store");
   sendResponse(res, {
-    statusCode: httpStatus15.CREATED,
+    statusCode: replayed ? httpStatus15.OK : httpStatus15.CREATED,
     success: true,
-    message: "bKash payment initiated successfully",
-    data: result
+    message: replayed ? "bKash payment attempt already exists" : "bKash payment initiated successfully",
+    data
   });
 });
 var handleBkashCallback2 = catchAsync(async (req, res) => {
@@ -3327,25 +3397,6 @@ var PaymentController = {
   initiateBkashPayment: initiateBkashPayment2,
   handleBkashCallback: handleBkashCallback2,
   getPaymentById: getPaymentById2
-};
-
-// src/app/module/payment/payment.validation.ts
-import { z as z9 } from "zod";
-var createPaymentSchema = z9.object({
-  body: z9.object({
-    requestId: z9.string().uuid("Valid blood request ID (UUID) is required"),
-    amount: z9.number().positive("Payment amount must be a positive number")
-  })
-});
-var bkashCallbackSchema = z9.object({
-  body: z9.object({
-    paymentID: z9.string().min(1, "paymentID is required"),
-    status: z9.string().optional()
-  })
-});
-var PaymentValidation = {
-  createPaymentSchema,
-  bkashCallbackSchema
 };
 
 // src/app/module/payment/payment.route.ts

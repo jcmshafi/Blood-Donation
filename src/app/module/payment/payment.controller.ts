@@ -4,20 +4,32 @@ import { AppError } from "../../utils/AppError";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
 import { PaymentService } from "./payment.service";
+import { idempotencyKeySchema } from "./payment.validation";
 
 const initiateBkashPayment = catchAsync(async (req: Request, res: Response) => {
 	const payerId = req.user!.userId;
-	const result = await PaymentService.initiateBkashPayment(
+	const key = idempotencyKeySchema.safeParse(req.get("idempotency-key"));
+	if (!key.success) {
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"A valid Idempotency-Key header (16-64 characters: letters, digits, '-' or '_') is required",
+		);
+	}
+	const { replayed, ...data } = await PaymentService.initiateBkashPayment(
 		payerId,
 		req.body,
+		key.data,
 		req.ip,
 	);
 
+	res.setHeader("Cache-Control", "no-store");
 	sendResponse(res, {
-		statusCode: httpStatus.CREATED,
+		statusCode: replayed ? httpStatus.OK : httpStatus.CREATED,
 		success: true,
-		message: "bKash payment initiated successfully",
-		data: result,
+		message: replayed
+			? "bKash payment attempt already exists"
+			: "bKash payment initiated successfully",
+		data,
 	});
 });
 
@@ -27,7 +39,10 @@ const handleBkashCallback = catchAsync(async (req: Request, res: Response) => {
 	const status = (req.body?.status || req.query.status) as string | undefined;
 
 	if (!paymentID) {
-		throw new AppError(httpStatus.BAD_REQUEST, "paymentID query parameter is required");
+		throw new AppError(
+			httpStatus.BAD_REQUEST,
+			"paymentID query parameter is required",
+		);
 	}
 
 	const result = await PaymentService.handleBkashCallback(
