@@ -25,3 +25,11 @@ export const formatMinor = (minor: number): string => {
 	const fraction = String(minor % 100).padStart(2, "0");
 	return `${whole}.${fraction}`;
 };
+
+/** Parses a gateway-reported amount string such as "150.50" into poisha, without bounds. */
+export const parseStoredAmountToMinor = (value: unknown): number | null => {
+	if (typeof value !== "string" || !/^\d{1,12}(\.\d{1,2})?$/.test(value))
+		return null;
+	const [whole, fraction = ""] = value.split(".");
+	return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+};

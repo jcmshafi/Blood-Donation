@@ -29,7 +29,10 @@ const loginValidationSchema = z.object({
 const googleLoginValidationSchema = z.object({
 	body: z.object({
 		idToken: z.string().min(1, "Google ID token is required"),
-		role: z.enum([Role.DONOR, Role.RECIPIENT]).optional().default(Role.RECIPIENT),
+		role: z
+			.enum([Role.DONOR, Role.RECIPIENT])
+			.optional()
+			.default(Role.RECIPIENT),
 	}),
 });
 

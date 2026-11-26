@@ -11,14 +11,17 @@ const updateProfileValidationSchema = z.object({
 
 const updateDonorProfileValidationSchema = z.object({
 	body: z.object({
-		bloodGroup: z.nativeEnum(BloodGroup, {
-			error: "Invalid blood group",
-		}).optional(),
+		bloodGroup: z
+			.nativeEnum(BloodGroup, {
+				error: "Invalid blood group",
+			})
+			.optional(),
 		isAvailable: z.boolean().optional(),
 		lastDonationDate: z
 			.string()
 			.refine((val) => !Number.isNaN(Date.parse(val)), {
-				message: "Invalid date format for lastDonationDate (e.g. YYYY-MM-DD or ISO string)",
+				message:
+					"Invalid date format for lastDonationDate (e.g. YYYY-MM-DD or ISO string)",
 			})
 			.optional()
 			.nullable(),

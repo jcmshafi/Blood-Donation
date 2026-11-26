@@ -18,7 +18,9 @@ export const donationHistoryQuerySchema = z
 		status: z.nativeEnum(DonationStatus).optional(),
 		page: positiveInteger(1000000, 1),
 		limit: positiveInteger(100, 10),
-		sortBy: z.enum(["createdAt", "updatedAt", "completedAt"]).default("createdAt"),
+		sortBy: z
+			.enum(["createdAt", "updatedAt", "completedAt"])
+			.default("createdAt"),
 		sortOrder: z.enum(["asc", "desc"]).default("desc"),
 	})
 	.strict();

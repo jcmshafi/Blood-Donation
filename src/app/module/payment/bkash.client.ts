@@ -12,6 +12,9 @@ const SUCCESS_CODE = "0000";
 /** Gateway-side failure. The message is internal; callers show a generic one. */
 export class BkashGatewayError extends Error {}
 
+/** bKash answered, but did not confirm the operation (as opposed to being unreachable). */
+export class BkashDeclinedError extends BkashGatewayError {}
+
 export const isBkashConfigured = (): boolean =>
 	Boolean(
 		config.bkash_app_key &&
@@ -152,8 +155,11 @@ class BkashClientService {
 				paymentID,
 			},
 		);
-		if (data.statusCode !== SUCCESS_CODE || !data.trxID) {
-			throw new BkashGatewayError("bKash did not confirm the payment");
+		if (data.statusCode !== SUCCESS_CODE) {
+			throw new BkashDeclinedError("bKash did not confirm the payment");
+		}
+		if (!data.trxID) {
+			throw new BkashGatewayError("bKash execute response was incomplete");
 		}
 		return data;
 	}

@@ -86,9 +86,7 @@ const getAllBloodRequests = async (filters: IBloodRequestFilterOptions) => {
 		sortOrder = "desc",
 	} = filters;
 
-	const andConditions: Prisma.BloodRequestWhereInput[] = [
-		{ isDeleted: false },
-	];
+	const andConditions: Prisma.BloodRequestWhereInput[] = [{ isDeleted: false }];
 
 	if (searchTerm) {
 		andConditions.push({

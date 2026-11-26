@@ -506,45 +506,56 @@ var jwtUtils = {
 
 // src/app/middleware/checkAuth.ts
 var auth = (...requiredRoles) => {
-  return catchAsync(async (req, _res, next) => {
-    const token = req.cookies.accessToken ? req.cookies.accessToken : req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.split(" ")[1] : req.headers.authorization;
-    if (!token) {
-      throw new AppError(
-        httpStatus4.UNAUTHORIZED,
-        "You are not logged in. Please log in to access this resource."
+  return catchAsync(
+    async (req, _res, next) => {
+      const token = req.cookies.accessToken ? req.cookies.accessToken : req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.split(" ")[1] : req.headers.authorization;
+      if (!token) {
+        throw new AppError(
+          httpStatus4.UNAUTHORIZED,
+          "You are not logged in. Please log in to access this resource."
+        );
+      }
+      const verifiedToken = jwtUtils.verifyToken(
+        token,
+        config_default.jwt_access_secret
       );
+      if (!verifiedToken.success) {
+        throw new AppError(
+          httpStatus4.UNAUTHORIZED,
+          "Invalid or expired access token"
+        );
+      }
+      const { userId, email, name, role } = verifiedToken.data;
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+      if (!user || user.isDeleted) {
+        throw new AppError(
+          httpStatus4.UNAUTHORIZED,
+          "User account not found or deleted"
+        );
+      }
+      if (user.status === "BLOCKED") {
+        throw new AppError(
+          httpStatus4.FORBIDDEN,
+          "Your account has been suspended by administration"
+        );
+      }
+      if (requiredRoles.length > 0 && !requiredRoles.includes(user.role)) {
+        throw new AppError(
+          httpStatus4.FORBIDDEN,
+          "Forbidden. You do not have permission to perform this action"
+        );
+      }
+      req.user = {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
+      };
+      next();
     }
-    const verifiedToken = jwtUtils.verifyToken(token, config_default.jwt_access_secret);
-    if (!verifiedToken.success) {
-      throw new AppError(httpStatus4.UNAUTHORIZED, "Invalid or expired access token");
-    }
-    const { userId, email, name, role } = verifiedToken.data;
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-    if (!user || user.isDeleted) {
-      throw new AppError(httpStatus4.UNAUTHORIZED, "User account not found or deleted");
-    }
-    if (user.status === "BLOCKED") {
-      throw new AppError(
-        httpStatus4.FORBIDDEN,
-        "Your account has been suspended by administration"
-      );
-    }
-    if (requiredRoles.length > 0 && !requiredRoles.includes(user.role)) {
-      throw new AppError(
-        httpStatus4.FORBIDDEN,
-        "Forbidden. You do not have permission to perform this action"
-      );
-    }
-    req.user = {
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role
-    };
-    next();
-  });
+  );
 };
 
 // src/app/middleware/validateRequest.ts
@@ -1088,15 +1099,30 @@ import { OAuth2Client } from "google-auth-library";
 import httpStatus7 from "http-status";
 var googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 var registerUser = async (payload) => {
-  const { name, password, role = Role.RECIPIENT, phone, address, bloodGroup, latitude, longitude } = payload;
+  const {
+    name,
+    password,
+    role = Role.RECIPIENT,
+    phone,
+    address,
+    bloodGroup,
+    latitude,
+    longitude
+  } = payload;
   const email = payload.email.trim().toLowerCase();
   const isUserExists = await prisma.user.findUnique({
     where: { email }
   });
   if (isUserExists) {
-    throw new AppError(httpStatus7.CONFLICT, "User with this email already exists");
+    throw new AppError(
+      httpStatus7.CONFLICT,
+      "User with this email already exists"
+    );
   }
-  const hashedPassword = await bcrypt.hash(password, Number(config_default.bcrypt_salt_rounds) || 10);
+  const hashedPassword = await bcrypt.hash(
+    password,
+    Number(config_default.bcrypt_salt_rounds) || 10
+  );
   const createdUser = await prisma.user.create({
     data: {
       name,
@@ -1160,7 +1186,10 @@ var loginUser = async (payload) => {
     throw new AppError(httpStatus7.FORBIDDEN, "This account has been deleted");
   }
   if (user.status === UserStatus.BLOCKED) {
-    throw new AppError(httpStatus7.FORBIDDEN, "Your account has been suspended by administration");
+    throw new AppError(
+      httpStatus7.FORBIDDEN,
+      "Your account has been suspended by administration"
+    );
   }
   if (!user.password) {
     throw new AppError(
@@ -1218,7 +1247,10 @@ var googleLogin = async (payload) => {
       name = email.split("@")[0] || "Demo Google User";
       googleId = `google_demo_${Date.now()}`;
     } else {
-      throw new AppError(httpStatus7.UNAUTHORIZED, "Invalid or expired Google ID token");
+      throw new AppError(
+        httpStatus7.UNAUTHORIZED,
+        "Invalid or expired Google ID token"
+      );
     }
   }
   let user = await prisma.user.findFirst({
@@ -1229,7 +1261,10 @@ var googleLogin = async (payload) => {
   });
   if (user) {
     if (user.status === UserStatus.BLOCKED) {
-      throw new AppError(httpStatus7.FORBIDDEN, "Your account has been suspended");
+      throw new AppError(
+        httpStatus7.FORBIDDEN,
+        "Your account has been suspended"
+      );
     }
     if (user.isDeleted) {
       throw new AppError(httpStatus7.FORBIDDEN, "Your account has been deleted");
@@ -1289,14 +1324,20 @@ var refreshToken = async (token) => {
     config_default.jwt_refresh_secret
   );
   if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
-    throw new AppError(httpStatus7.UNAUTHORIZED, "Invalid or expired refresh token");
+    throw new AppError(
+      httpStatus7.UNAUTHORIZED,
+      "Invalid or expired refresh token"
+    );
   }
   const data = verifiedRefreshToken.data;
   const user = await prisma.user.findUnique({
     where: { id: data.userId }
   });
   if (!user || user.isDeleted || user.status !== UserStatus.ACTIVE) {
-    throw new AppError(httpStatus7.UNAUTHORIZED, "User session is no longer active");
+    throw new AppError(
+      httpStatus7.UNAUTHORIZED,
+      "User session is no longer active"
+    );
   }
   const jwtPayload = {
     userId: user.id,
@@ -2349,9 +2390,7 @@ var getAllBloodRequests = async (filters) => {
     sortBy = "createdAt",
     sortOrder = "desc"
   } = filters;
-  const andConditions = [
-    { isDeleted: false }
-  ];
+  const andConditions = [{ isDeleted: false }];
   if (searchTerm) {
     andConditions.push({
       OR: [
@@ -2843,11 +2882,19 @@ var formatMinor = (minor) => {
   const fraction = String(minor % 100).padStart(2, "0");
   return `${whole}.${fraction}`;
 };
+var parseStoredAmountToMinor = (value) => {
+  if (typeof value !== "string" || !/^\d{1,12}(\.\d{1,2})?$/.test(value))
+    return null;
+  const [whole, fraction = ""] = value.split(".");
+  return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+};
 
 // src/app/module/payment/bkash.client.ts
 var REQUEST_TIMEOUT_MS = 15e3;
 var SUCCESS_CODE = "0000";
 var BkashGatewayError = class extends Error {
+};
+var BkashDeclinedError = class extends BkashGatewayError {
 };
 var isBkashConfigured = () => Boolean(
   config_default.bkash_app_key && config_default.bkash_app_secret && config_default.bkash_username && config_default.bkash_password && config_default.bkash_base_url && config_default.bkash_callback_url
@@ -2859,7 +2906,9 @@ var isTrustedCheckoutUrl = (value) => {
     const host = url.hostname.toLowerCase();
     let configuredHost = "";
     try {
-      configuredHost = new URL(config_default.bkash_base_url).hostname.toLowerCase();
+      configuredHost = new URL(
+        config_default.bkash_base_url
+      ).hostname.toLowerCase();
     } catch {
     }
     if (configuredHost && host === configuredHost) return true;
@@ -2884,7 +2933,10 @@ var BkashClientService = class {
     } catch {
       throw new BkashGatewayError("bKash gateway unreachable");
     }
-    if (!response.ok) throw new BkashGatewayError(`bKash gateway returned HTTP ${response.status}`);
+    if (!response.ok)
+      throw new BkashGatewayError(
+        `bKash gateway returned HTTP ${response.status}`
+      );
     try {
       return await response.json();
     } catch {
@@ -2895,14 +2947,21 @@ var BkashClientService = class {
   async getValidToken() {
     const now = Date.now();
     if (this.idToken && now < this.tokenExpiresAt - 6e4) return this.idToken;
-    const data = await this.post("/tokenized/checkout/token/grant", {
-      headers: {
-        username: config_default.bkash_username,
-        password: config_default.bkash_password
-      },
-      body: { app_key: config_default.bkash_app_key, app_secret: config_default.bkash_app_secret }
-    });
-    if (!data.id_token) throw new BkashGatewayError("bKash token grant was rejected");
+    const data = await this.post(
+      "/tokenized/checkout/token/grant",
+      {
+        headers: {
+          username: config_default.bkash_username,
+          password: config_default.bkash_password
+        },
+        body: {
+          app_key: config_default.bkash_app_key,
+          app_secret: config_default.bkash_app_secret
+        }
+      }
+    );
+    if (!data.id_token)
+      throw new BkashGatewayError("bKash token grant was rejected");
     this.idToken = data.id_token;
     this.tokenExpiresAt = now + (data.expires_in || 3600) * 1e3;
     return this.idToken;
@@ -2910,21 +2969,27 @@ var BkashClientService = class {
   async authorizedPost(path3, body) {
     const token = await this.getValidToken();
     return this.post(path3, {
-      headers: { Authorization: token, "X-APP-Key": config_default.bkash_app_key },
+      headers: {
+        Authorization: token,
+        "X-APP-Key": config_default.bkash_app_key
+      },
       body
     });
   }
   /** Creates a tokenized checkout. `amount` is a two-decimal BDT string such as "150.50". */
   async createPayment(params) {
-    const data = await this.authorizedPost("/tokenized/checkout/create", {
-      mode: "0011",
-      payerReference: params.payerReference || "01700000000",
-      callbackURL: config_default.bkash_callback_url,
-      amount: params.amount,
-      currency: "BDT",
-      intent: "sale",
-      merchantInvoiceNumber: params.invoiceNumber
-    });
+    const data = await this.authorizedPost(
+      "/tokenized/checkout/create",
+      {
+        mode: "0011",
+        payerReference: params.payerReference || "01700000000",
+        callbackURL: config_default.bkash_callback_url,
+        amount: params.amount,
+        currency: "BDT",
+        intent: "sale",
+        merchantInvoiceNumber: params.invoiceNumber
+      }
+    );
     if (data.statusCode !== SUCCESS_CODE || !data.paymentID || !data.bkashURL) {
       throw new BkashGatewayError("bKash declined the checkout request");
     }
@@ -2935,20 +3000,30 @@ var BkashClientService = class {
   }
   /** Executes an initiated payment. Throws on any gateway failure; never fabricates success. */
   async executePayment(paymentID) {
-    const data = await this.authorizedPost("/tokenized/checkout/execute", {
-      paymentID
-    });
-    if (data.statusCode !== SUCCESS_CODE || !data.trxID) {
-      throw new BkashGatewayError("bKash did not confirm the payment");
+    const data = await this.authorizedPost(
+      "/tokenized/checkout/execute",
+      {
+        paymentID
+      }
+    );
+    if (data.statusCode !== SUCCESS_CODE) {
+      throw new BkashDeclinedError("bKash did not confirm the payment");
+    }
+    if (!data.trxID) {
+      throw new BkashGatewayError("bKash execute response was incomplete");
     }
     return data;
   }
   /** Queries payment status from bKash. Throws on any gateway failure. */
   async queryPayment(paymentID) {
-    const data = await this.authorizedPost("/tokenized/checkout/payment/status", {
-      paymentID
-    });
-    if (!data.transactionStatus) throw new BkashGatewayError("bKash status response was incomplete");
+    const data = await this.authorizedPost(
+      "/tokenized/checkout/payment/status",
+      {
+        paymentID
+      }
+    );
+    if (!data.transactionStatus)
+      throw new BkashGatewayError("bKash status response was incomplete");
     return data;
   }
 };
@@ -3095,125 +3170,140 @@ var initiateBkashPayment = async (payerId, payload, idempotencyKey, ipAddress) =
     );
   }
 };
-var handleBkashCallback = async (payload, ipAddress) => {
-  const payment = await prisma.payment.findUnique({
-    where: { paymentId: payload.paymentID },
-    include: {
-      request: true,
-      payer: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true
-        }
-      }
+var OUTCOME_BY_STATUS = {
+  [PaymentStatus.COMPLETED]: "completed",
+  [PaymentStatus.CANCELLED]: "cancelled",
+  [PaymentStatus.FAILED]: "failed",
+  [PaymentStatus.PENDING]: "pending"
+};
+var toCallbackResult = (payment) => ({
+  outcome: OUTCOME_BY_STATUS[payment.status],
+  payment: {
+    ...toPaymentSummary(payment),
+    transactionId: payment.transactionId,
+    failureReason: payment.failureReason
+  }
+});
+var matchesStoredPayment = (payment, data) => data.paymentID === payment.paymentId && Boolean(data.trxID) && data.transactionStatus?.toLowerCase() === "completed" && data.currency === payment.currency && parseStoredAmountToMinor(data.amount) === payment.amountMinor;
+var settlePending = async (payment, next, ipAddress) => {
+  const claimed = await prisma.payment.updateMany({
+    where: { id: payment.id, status: PaymentStatus.PENDING },
+    data: {
+      status: next.status,
+      ...next.reason ? { failureReason: next.reason } : {},
+      ...next.transactionId ? { transactionId: next.transactionId } : {},
+      ...next.executeResponse ? { paymentExecuteResponse: next.executeResponse } : {}
     }
   });
-  if (!payment) {
+  const current = await prisma.payment.findUnique({
+    where: { paymentId: payment.paymentId },
+    include: { payer: { select: { id: true, name: true, email: true } } }
+  });
+  if (!current) {
     throw new AppError(httpStatus14.NOT_FOUND, "Payment transaction not found");
   }
-  if (payload.status === "cancel") {
-    const updated = await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: PaymentStatus.CANCELLED }
-    });
-    await prisma.auditLog.create({
-      data: {
-        userId: payment.payerId,
-        action: "PAYMENT_CANCELLED",
-        resource: "Payment",
-        resourceId: payment.id,
-        details: { paymentId: payment.paymentId, status: "cancel" },
-        ipAddress
-      }
-    });
-    return updated;
-  }
-  if (payload.status === "failure") {
-    const updated = await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: PaymentStatus.FAILED }
-    });
-    await prisma.auditLog.create({
-      data: {
-        userId: payment.payerId,
-        action: "PAYMENT_FAILED",
-        resource: "Payment",
-        resourceId: payment.id,
-        details: { paymentId: payment.paymentId, status: "failure" },
-        ipAddress
-      }
-    });
-    return updated;
-  }
-  if (payment.status === PaymentStatus.COMPLETED) {
-    return payment;
-  }
-  let executeResponse;
-  try {
-    executeResponse = await BkashClient.executePayment(payload.paymentID);
-  } catch {
-    throw new AppError(
-      httpStatus14.BAD_GATEWAY,
-      "bKash could not confirm this payment yet"
-    );
-  }
-  const completedPayment = await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      status: PaymentStatus.COMPLETED,
-      transactionId: executeResponse.trxID,
-      paymentExecuteResponse: executeResponse
-    },
-    include: {
-      request: {
-        select: {
-          id: true,
-          patientName: true,
-          bloodGroup: true,
-          hospitalName: true
-        }
-      },
-      payer: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true
-        }
-      }
-    }
-  });
+  if (claimed.count === 0) return current;
   await prisma.auditLog.create({
     data: {
       userId: payment.payerId,
-      action: "PAYMENT_COMPLETED",
+      action: next.action,
       resource: "Payment",
-      resourceId: completedPayment.id,
+      resourceId: payment.id,
       details: {
-        paymentId: completedPayment.paymentId,
-        transactionId: completedPayment.transactionId,
-        amount: completedPayment.amount
+        provider: "BKASH",
+        status: next.status,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        ...next.transactionId ? { transactionId: next.transactionId } : {},
+        ...next.reason ? { reason: next.reason } : {}
       },
       ipAddress
     }
   });
-  if (completedPayment.payer?.email) {
+  if (next.status === PaymentStatus.COMPLETED && current.payer?.email) {
     sendEmail({
-      to: completedPayment.payer.email,
-      subject: `bKash Payment Receipt: ${completedPayment.amount} BDT (TrxID: ${completedPayment.transactionId})`,
+      to: current.payer.email,
+      subject: `bKash Payment Receipt: ${formatMinor(current.amountMinor)} BDT (TrxID: ${current.transactionId})`,
       html: paymentReceiptEmailHtml(
-        completedPayment.payer.name,
-        completedPayment.amount,
-        completedPayment.transactionId || "N/A",
-        completedPayment.paymentId
+        current.payer.name,
+        current.amountMinor / 100,
+        current.transactionId || "N/A",
+        current.paymentId
       )
     }).catch(
       (err) => console.error("Payment receipt email dispatch error:", err)
     );
   }
-  return completedPayment;
+  return current;
+};
+var handleBkashCallback = async (payload, ipAddress) => {
+  const payment = await prisma.payment.findUnique({
+    where: { paymentId: payload.paymentID }
+  });
+  if (!payment) {
+    throw new AppError(httpStatus14.NOT_FOUND, "Payment transaction not found");
+  }
+  if (payment.status !== PaymentStatus.PENDING) {
+    return toCallbackResult(payment);
+  }
+  const complete = (data) => matchesStoredPayment(payment, data) ? settlePending(
+    payment,
+    {
+      status: PaymentStatus.COMPLETED,
+      action: "PAYMENT_COMPLETED",
+      transactionId: data.trxID,
+      executeResponse: data
+    },
+    ipAddress
+  ) : settlePending(
+    payment,
+    {
+      status: PaymentStatus.FAILED,
+      action: "PAYMENT_VERIFICATION_FAILED",
+      reason: "Gateway response did not match the payment"
+    },
+    ipAddress
+  );
+  let confirmed = null;
+  if (payload.status === "success") {
+    try {
+      const executed = await BkashClient.executePayment(payload.paymentID);
+      confirmed = await complete(executed);
+    } catch (error) {
+      if (!(error instanceof BkashDeclinedError)) {
+        return toCallbackResult(payment);
+      }
+    }
+  }
+  if (!confirmed) {
+    let remote;
+    try {
+      remote = await BkashClient.queryPayment(payload.paymentID);
+    } catch {
+      return toCallbackResult(payment);
+    }
+    const remoteStatus = remote.transactionStatus.toLowerCase();
+    if (remoteStatus === "completed") {
+      confirmed = await complete(remote);
+    } else if (remoteStatus === "cancelled" || remoteStatus === "canceled") {
+      confirmed = await settlePending(
+        payment,
+        { status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
+        ipAddress
+      );
+    } else if (remoteStatus === "failed" || remoteStatus === "expired") {
+      confirmed = await settlePending(
+        payment,
+        {
+          status: PaymentStatus.FAILED,
+          action: "PAYMENT_FAILED",
+          reason: "bKash reported the payment as unsuccessful"
+        },
+        ipAddress
+      );
+    }
+  }
+  return toCallbackResult(confirmed ?? payment);
 };
 var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
   const payment = await prisma.payment.findFirst({
@@ -3221,6 +3311,7 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
       OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }]
     },
     omit: {
+      paymentExecuteResponse: true,
       idempotencyKey: true,
       initiationFingerprint: true,
       checkoutUrl: true
@@ -3283,7 +3374,10 @@ var createPaymentSchema = z9.object({
     amount: amountSchema
   }).strict().transform(({ requestId, amount }) => ({ requestId, amountMinor: amount }))
 });
-var idempotencyKeySchema = z9.string().regex(/^[A-Za-z0-9_-]{16,64}$/, "Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'");
+var idempotencyKeySchema = z9.string().regex(
+  /^[A-Za-z0-9_-]{16,64}$/,
+  "Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'"
+);
 var bkashCallbackSchema = z9.object({
   body: z9.object({
     paymentID: z9.string().min(1, "paymentID is required"),
@@ -3319,65 +3413,55 @@ var initiateBkashPayment2 = catchAsync(async (req, res) => {
     data
   });
 });
-var handleBkashCallback2 = catchAsync(async (req, res) => {
-  const paymentID = req.body?.paymentID || req.query.paymentID || "";
-  const status = req.body?.status || req.query.status;
-  if (!paymentID) {
-    throw new AppError(httpStatus15.BAD_REQUEST, "paymentID query parameter is required");
+var OUTCOME_PAGE = {
+  completed: "success",
+  cancelled: "cancel",
+  failed: "failure"
+};
+var outcomeRedirect = (page, paymentRecordId) => {
+  if (!config_default.frontend_url) return null;
+  try {
+    const url = new URL(`/payment/${page}`, config_default.frontend_url);
+    if (paymentRecordId) url.searchParams.set("payment", paymentRecordId);
+    return url.toString();
+  } catch {
+    return null;
   }
-  const result = await PaymentService.handleBkashCallback(
-    { paymentID, status },
-    req.ip
-  );
-  if (req.method === "GET" && req.headers.accept?.includes("text/html")) {
-    res.setHeader("Content-Type", "text/html");
-    return res.send(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>bKash Payment ${result.status}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fdf2f8; margin: 0; padding: 40px 16px; display: flex; justify-content: center; }
-    .card { background: #ffffff; border-radius: 16px; box-shadow: 0 10px 25px rgba(226, 19, 110, 0.1); max-width: 480px; width: 100%; padding: 32px; text-align: center; border-top: 6px solid #e2136e; }
-    .badge { display: inline-block; padding: 6px 14px; border-radius: 9999px; font-weight: 600; font-size: 14px; margin-bottom: 16px; }
-    .badge-success { background: #dcfce7; color: #15803d; }
-    .badge-cancelled { background: #fee2e2; color: #b91c1c; }
-    h1 { color: #111827; margin: 0 0 8px 0; font-size: 24px; }
-    p { color: #4b5563; margin: 0 0 24px 0; font-size: 15px; }
-    .details { background: #f9fafb; border-radius: 12px; padding: 16px; text-align: left; margin-bottom: 24px; }
-    .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f3f4f6; font-size: 14px; }
-    .row:last-child { border-bottom: none; }
-    .label { color: #6b7280; }
-    .val { font-weight: 600; color: #1f2937; }
-    .brand { color: #e2136e; font-weight: 700; font-size: 18px; margin-bottom: 8px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="brand">bKash Payment Gateway</div>
-    <span class="badge ${result.status === "COMPLETED" ? "badge-success" : "badge-cancelled"}">
-      ${result.status === "COMPLETED" ? "\u2713 PAYMENT COMPLETED" : `\u2715 ${result.status}`}
-    </span>
-    <h1>${result.status === "COMPLETED" ? "Payment Successful!" : `Payment ${result.status}`}</h1>
-    <p>${result.status === "COMPLETED" ? "Thank you! Your emergency blood assistance fee has been securely verified." : "The transaction was cancelled or could not be processed."}</p>
-    <div class="details">
-      <div class="row"><span class="label">Payment ID:</span><span class="val">${result.paymentId}</span></div>
-      ${result.transactionId ? `<div class="row"><span class="label">Transaction ID (TrxID):</span><span class="val">${result.transactionId}</span></div>` : ""}
-      <div class="row"><span class="label">Amount:</span><span class="val">BDT ${result.amount}</span></div>
-      <div class="row"><span class="label">Status:</span><span class="val">${result.status}</span></div>
-    </div>
-    <p style="font-size: 13px; color: #9ca3af;">You can return to Postman or close this tab.</p>
-  </div>
-</body>
-</html>
-		`);
+};
+var handleBkashCallback2 = catchAsync(async (req, res) => {
+  const read = (name) => {
+    const value = req.body?.[name] ?? req.query[name];
+    return typeof value === "string" ? value : void 0;
+  };
+  const paymentID = read("paymentID");
+  const hint = read("status");
+  if (!paymentID || paymentID.length > 128) {
+    throw new AppError(httpStatus15.BAD_REQUEST, "A valid paymentID is required");
+  }
+  const redirecting = req.method === "GET";
+  res.setHeader("Cache-Control", "no-store");
+  let result;
+  try {
+    result = await PaymentService.handleBkashCallback(
+      { paymentID, status: hint },
+      req.ip
+    );
+  } catch (error) {
+    const target = redirecting && outcomeRedirect("failure");
+    if (target && error instanceof AppError && error.statusCode === 404) {
+      return res.redirect(target);
+    }
+    throw error;
+  }
+  if (redirecting) {
+    const page = result.outcome === "pending" ? hint === "cancel" ? "cancel" : hint === "failure" ? "failure" : "success" : OUTCOME_PAGE[result.outcome];
+    const target = outcomeRedirect(page, result.payment.id);
+    if (target) return res.redirect(target);
   }
   sendResponse(res, {
     statusCode: httpStatus15.OK,
     success: true,
-    message: "bKash payment processed successfully",
+    message: `bKash payment ${result.outcome}`,
     data: result
   });
 });
@@ -3474,7 +3558,9 @@ var updateDonorProfile = async (userId, payload) => {
   const parsedDate = payload.lastDonationDate !== void 0 ? payload.lastDonationDate ? new Date(payload.lastDonationDate) : null : void 0;
   const updateData = {
     ...payload.bloodGroup !== void 0 && { bloodGroup: payload.bloodGroup },
-    ...payload.isAvailable !== void 0 && { isAvailable: payload.isAvailable },
+    ...payload.isAvailable !== void 0 && {
+      isAvailable: payload.isAvailable
+    },
     ...parsedDate !== void 0 && { lastDonationDate: parsedDate },
     ...payload.phone !== void 0 && { phone: payload.phone },
     ...payload.address !== void 0 && { address: payload.address },

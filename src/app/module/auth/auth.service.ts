@@ -16,7 +16,16 @@ import type {
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const registerUser = async (payload: IRegisterUserPayload) => {
-	const { name, password, role = Role.RECIPIENT, phone, address, bloodGroup, latitude, longitude } = payload;
+	const {
+		name,
+		password,
+		role = Role.RECIPIENT,
+		phone,
+		address,
+		bloodGroup,
+		latitude,
+		longitude,
+	} = payload;
 	const email = payload.email.trim().toLowerCase();
 
 	const isUserExists = await prisma.user.findUnique({
@@ -24,10 +33,16 @@ const registerUser = async (payload: IRegisterUserPayload) => {
 	});
 
 	if (isUserExists) {
-		throw new AppError(httpStatus.CONFLICT, "User with this email already exists");
+		throw new AppError(
+			httpStatus.CONFLICT,
+			"User with this email already exists",
+		);
 	}
 
-	const hashedPassword = await bcrypt.hash(password, Number(config.bcrypt_salt_rounds) || 10);
+	const hashedPassword = await bcrypt.hash(
+		password,
+		Number(config.bcrypt_salt_rounds) || 10,
+	);
 
 	const createdUser = await prisma.user.create({
 		data: {
@@ -101,7 +116,10 @@ const loginUser = async (payload: ILoginUserPayload) => {
 	}
 
 	if (user.status === UserStatus.BLOCKED) {
-		throw new AppError(httpStatus.FORBIDDEN, "Your account has been suspended by administration");
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"Your account has been suspended by administration",
+		);
 	}
 
 	if (!user.password) {
@@ -171,7 +189,10 @@ const googleLogin = async (payload: IGoogleLoginPayload) => {
 			name = email.split("@")[0] || "Demo Google User";
 			googleId = `google_demo_${Date.now()}`;
 		} else {
-			throw new AppError(httpStatus.UNAUTHORIZED, "Invalid or expired Google ID token");
+			throw new AppError(
+				httpStatus.UNAUTHORIZED,
+				"Invalid or expired Google ID token",
+			);
 		}
 	}
 
@@ -184,7 +205,10 @@ const googleLogin = async (payload: IGoogleLoginPayload) => {
 
 	if (user) {
 		if (user.status === UserStatus.BLOCKED) {
-			throw new AppError(httpStatus.FORBIDDEN, "Your account has been suspended");
+			throw new AppError(
+				httpStatus.FORBIDDEN,
+				"Your account has been suspended",
+			);
 		}
 		if (user.isDeleted) {
 			throw new AppError(httpStatus.FORBIDDEN, "Your account has been deleted");
@@ -252,7 +276,10 @@ const refreshToken = async (token: string) => {
 	);
 
 	if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
-		throw new AppError(httpStatus.UNAUTHORIZED, "Invalid or expired refresh token");
+		throw new AppError(
+			httpStatus.UNAUTHORIZED,
+			"Invalid or expired refresh token",
+		);
 	}
 
 	const data = verifiedRefreshToken.data as JwtPayload;
@@ -262,7 +289,10 @@ const refreshToken = async (token: string) => {
 	});
 
 	if (!user || user.isDeleted || user.status !== UserStatus.ACTIVE) {
-		throw new AppError(httpStatus.UNAUTHORIZED, "User session is no longer active");
+		throw new AppError(
+			httpStatus.UNAUTHORIZED,
+			"User session is no longer active",
+		);
 	}
 
 	const jwtPayload = {

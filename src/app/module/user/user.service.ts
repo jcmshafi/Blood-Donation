@@ -84,7 +84,9 @@ const updateDonorProfile = async (
 
 	const updateData = {
 		...(payload.bloodGroup !== undefined && { bloodGroup: payload.bloodGroup }),
-		...(payload.isAvailable !== undefined && { isAvailable: payload.isAvailable }),
+		...(payload.isAvailable !== undefined && {
+			isAvailable: payload.isAvailable,
+		}),
 		...(parsedDate !== undefined && { lastDonationDate: parsedDate }),
 		...(payload.phone !== undefined && { phone: payload.phone }),
 		...(payload.address !== undefined && { address: payload.address }),

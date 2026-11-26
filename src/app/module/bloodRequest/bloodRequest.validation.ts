@@ -7,11 +7,17 @@ import {
 
 const createBloodRequestSchema = z.object({
 	body: z.object({
-		patientName: z.string().min(2, "Patient name must be at least 2 characters"),
+		patientName: z
+			.string()
+			.min(2, "Patient name must be at least 2 characters"),
 		bloodGroup: z.nativeEnum(BloodGroup, {
 			error: "Valid blood group is required",
 		}),
-		unitsNeeded: z.number().int().min(1, "At least 1 unit is required").default(1),
+		unitsNeeded: z
+			.number()
+			.int()
+			.min(1, "At least 1 unit is required")
+			.default(1),
 		hospitalName: z.string().min(2, "Hospital name is required"),
 		hospitalAddress: z.string().min(2, "Hospital address is required"),
 		latitude: z

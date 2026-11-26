@@ -9,10 +9,16 @@ import {
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
 import { paymentReceiptEmailHtml, sendEmail } from "../../utils/sendEmail";
-import { formatMinor } from "../../utils/money";
-import { BkashClient, isBkashConfigured } from "./bkash.client";
+import { formatMinor, parseStoredAmountToMinor } from "../../utils/money";
+import {
+	BkashClient,
+	BkashDeclinedError,
+	isBkashConfigured,
+} from "./bkash.client";
 import type {
 	IBkashCallbackPayload,
+	IBkashExecutePaymentResponse,
+	IBkashQueryPaymentResponse,
 	ICreatePaymentPayload,
 } from "./payment.interface";
 
@@ -192,143 +198,214 @@ const initiateBkashPayment = async (
 	}
 };
 
+type CallbackOutcome = "completed" | "cancelled" | "failed" | "pending";
+
+const OUTCOME_BY_STATUS: Record<PaymentStatus, CallbackOutcome> = {
+	[PaymentStatus.COMPLETED]: "completed",
+	[PaymentStatus.CANCELLED]: "cancelled",
+	[PaymentStatus.FAILED]: "failed",
+	[PaymentStatus.PENDING]: "pending",
+};
+
+type StoredPayment = {
+	id: string;
+	requestId: string;
+	payerId: string;
+	status: PaymentStatus;
+	paymentMethod: PaymentMethod;
+	currency: string;
+	amountMinor: number;
+	paymentId: string;
+	transactionId: string | null;
+	failureReason: string | null;
+	createdAt: Date;
+};
+
+const toCallbackResult = (payment: StoredPayment) => ({
+	outcome: OUTCOME_BY_STATUS[payment.status],
+	payment: {
+		...toPaymentSummary(payment),
+		transactionId: payment.transactionId,
+		failureReason: payment.failureReason,
+	},
+});
+
+/** Does a bKash execute/query response match the stored attempt and report completion? */
+const matchesStoredPayment = (
+	payment: StoredPayment,
+	data: {
+		paymentID?: string;
+		trxID?: string;
+		transactionStatus?: string;
+		amount?: string;
+		currency?: string;
+	},
+) =>
+	data.paymentID === payment.paymentId &&
+	Boolean(data.trxID) &&
+	data.transactionStatus?.toLowerCase() === "completed" &&
+	data.currency === payment.currency &&
+	parseStoredAmountToMinor(data.amount) === payment.amountMinor;
+
+/**
+ * Settles a PENDING payment exactly once. Only the caller whose conditional update
+ * wins writes the audit entry and sends the receipt; every other caller just reads.
+ */
+const settlePending = async (
+	payment: StoredPayment,
+	next: {
+		status: PaymentStatus;
+		action: string;
+		reason?: string;
+		transactionId?: string;
+		executeResponse?: object;
+	},
+	ipAddress?: string,
+) => {
+	const claimed = await prisma.payment.updateMany({
+		where: { id: payment.id, status: PaymentStatus.PENDING },
+		data: {
+			status: next.status,
+			...(next.reason ? { failureReason: next.reason } : {}),
+			...(next.transactionId ? { transactionId: next.transactionId } : {}),
+			...(next.executeResponse
+				? { paymentExecuteResponse: next.executeResponse as object }
+				: {}),
+		},
+	});
+
+	const current = await prisma.payment.findUnique({
+		where: { paymentId: payment.paymentId },
+		include: { payer: { select: { id: true, name: true, email: true } } },
+	});
+	if (!current) {
+		throw new AppError(httpStatus.NOT_FOUND, "Payment transaction not found");
+	}
+	if (claimed.count === 0) return current; // another callback already settled it
+
+	await prisma.auditLog.create({
+		data: {
+			userId: payment.payerId,
+			action: next.action,
+			resource: "Payment",
+			resourceId: payment.id,
+			details: {
+				provider: "BKASH",
+				status: next.status,
+				amountMinor: payment.amountMinor,
+				currency: payment.currency,
+				...(next.transactionId ? { transactionId: next.transactionId } : {}),
+				...(next.reason ? { reason: next.reason } : {}),
+			},
+			ipAddress,
+		},
+	});
+
+	if (next.status === PaymentStatus.COMPLETED && current.payer?.email) {
+		sendEmail({
+			to: current.payer.email,
+			subject: `bKash Payment Receipt: ${formatMinor(current.amountMinor)} BDT (TrxID: ${current.transactionId})`,
+			html: paymentReceiptEmailHtml(
+				current.payer.name,
+				current.amountMinor / 100,
+				current.transactionId || "N/A",
+				current.paymentId,
+			),
+		}).catch((err) =>
+			console.error("Payment receipt email dispatch error:", err),
+		);
+	}
+	return current;
+};
+
+/**
+ * bKash redirect handler. The browser `status` is only a hint for which check to run:
+ * the stored attempt changes only after bKash confirms the outcome server-to-server,
+ * a settled payment is never changed, and an outage leaves the payment PENDING.
+ */
 const handleBkashCallback = async (
 	payload: IBkashCallbackPayload,
 	ipAddress?: string,
 ) => {
 	const payment = await prisma.payment.findUnique({
 		where: { paymentId: payload.paymentID },
-		include: {
-			request: true,
-			payer: {
-				select: {
-					id: true,
-					name: true,
-					email: true,
-					phone: true,
-				},
-			},
-		},
 	});
-
 	if (!payment) {
 		throw new AppError(httpStatus.NOT_FOUND, "Payment transaction not found");
 	}
+	if (payment.status !== PaymentStatus.PENDING) {
+		return toCallbackResult(payment);
+	}
 
-	// Handle explicit user cancellation or failure from bKash redirect
-	if (payload.status === "cancel") {
-		const updated = await prisma.payment.update({
-			where: { id: payment.id },
-			data: { status: PaymentStatus.CANCELLED },
-		});
-		await prisma.auditLog.create({
-			data: {
-				userId: payment.payerId,
-				action: "PAYMENT_CANCELLED",
-				resource: "Payment",
-				resourceId: payment.id,
-				details: { paymentId: payment.paymentId, status: "cancel" },
+	const complete = (
+		data: IBkashExecutePaymentResponse | IBkashQueryPaymentResponse,
+	) =>
+		matchesStoredPayment(payment, data)
+			? settlePending(
+					payment,
+					{
+						status: PaymentStatus.COMPLETED,
+						action: "PAYMENT_COMPLETED",
+						transactionId: data.trxID,
+						executeResponse: data,
+					},
+					ipAddress,
+				)
+			: settlePending(
+					payment,
+					{
+						status: PaymentStatus.FAILED,
+						action: "PAYMENT_VERIFICATION_FAILED",
+						reason: "Gateway response did not match the payment",
+					},
+					ipAddress,
+				);
+
+	let confirmed: StoredPayment | null = null;
+
+	if (payload.status === "success") {
+		try {
+			const executed = await BkashClient.executePayment(payload.paymentID);
+			confirmed = await complete(executed);
+		} catch (error) {
+			if (!(error instanceof BkashDeclinedError)) {
+				return toCallbackResult(payment); // outage: stay PENDING
+			}
+			// Declined (for example already executed): fall through to the status query.
+		}
+	}
+
+	if (!confirmed) {
+		let remote: IBkashQueryPaymentResponse;
+		try {
+			remote = await BkashClient.queryPayment(payload.paymentID);
+		} catch {
+			return toCallbackResult(payment); // cannot confirm: stay PENDING
+		}
+		const remoteStatus = remote.transactionStatus.toLowerCase();
+		if (remoteStatus === "completed") {
+			confirmed = await complete(remote);
+		} else if (remoteStatus === "cancelled" || remoteStatus === "canceled") {
+			confirmed = await settlePending(
+				payment,
+				{ status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
 				ipAddress,
-			},
-		});
-		return updated;
-	}
-
-	if (payload.status === "failure") {
-		const updated = await prisma.payment.update({
-			where: { id: payment.id },
-			data: { status: PaymentStatus.FAILED },
-		});
-		await prisma.auditLog.create({
-			data: {
-				userId: payment.payerId,
-				action: "PAYMENT_FAILED",
-				resource: "Payment",
-				resourceId: payment.id,
-				details: { paymentId: payment.paymentId, status: "failure" },
+			);
+		} else if (remoteStatus === "failed" || remoteStatus === "expired") {
+			confirmed = await settlePending(
+				payment,
+				{
+					status: PaymentStatus.FAILED,
+					action: "PAYMENT_FAILED",
+					reason: "bKash reported the payment as unsuccessful",
+				},
 				ipAddress,
-			},
-		});
-		return updated;
+			);
+		}
+		// Still initiated/authorized at bKash: nothing is confirmed, stay PENDING.
 	}
 
-	// If already completed, return existing record
-	if (payment.status === PaymentStatus.COMPLETED) {
-		return payment;
-	}
-
-	// Execute payment through bKash Tokenized Checkout
-	let executeResponse: Awaited<ReturnType<typeof BkashClient.executePayment>>;
-	try {
-		executeResponse = await BkashClient.executePayment(payload.paymentID);
-	} catch {
-		throw new AppError(
-			httpStatus.BAD_GATEWAY,
-			"bKash could not confirm this payment yet",
-		);
-	}
-
-	// Atomically complete the payment record
-	const completedPayment = await prisma.payment.update({
-		where: { id: payment.id },
-		data: {
-			status: PaymentStatus.COMPLETED,
-			transactionId: executeResponse.trxID,
-			paymentExecuteResponse: executeResponse as any,
-		},
-		include: {
-			request: {
-				select: {
-					id: true,
-					patientName: true,
-					bloodGroup: true,
-					hospitalName: true,
-				},
-			},
-			payer: {
-				select: {
-					id: true,
-					name: true,
-					email: true,
-					phone: true,
-				},
-			},
-		},
-	});
-
-	// Record audit log for successful transaction
-	await prisma.auditLog.create({
-		data: {
-			userId: payment.payerId,
-			action: "PAYMENT_COMPLETED",
-			resource: "Payment",
-			resourceId: completedPayment.id,
-			details: {
-				paymentId: completedPayment.paymentId,
-				transactionId: completedPayment.transactionId,
-				amount: completedPayment.amount,
-			},
-			ipAddress,
-		},
-	});
-
-	// Dispatch transactional payment receipt email
-	if (completedPayment.payer?.email) {
-		sendEmail({
-			to: completedPayment.payer.email,
-			subject: `bKash Payment Receipt: ${completedPayment.amount} BDT (TrxID: ${completedPayment.transactionId})`,
-			html: paymentReceiptEmailHtml(
-				completedPayment.payer.name,
-				completedPayment.amount,
-				completedPayment.transactionId || "N/A",
-				completedPayment.paymentId,
-			),
-		}).catch((err) =>
-			console.error("Payment receipt email dispatch error:", err),
-		);
-	}
-
-	return completedPayment;
+	return toCallbackResult(confirmed ?? payment);
 };
 
 const getPaymentById = async (
@@ -341,6 +418,7 @@ const getPaymentById = async (
 			OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }],
 		},
 		omit: {
+			paymentExecuteResponse: true,
 			idempotencyKey: true,
 			initiationFingerprint: true,
 			checkoutUrl: true,
