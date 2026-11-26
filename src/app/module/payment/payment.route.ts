@@ -19,6 +19,13 @@ router.post(
 router.post("/bkash/callback", PaymentController.handleBkashCallback);
 router.get("/bkash/callback", PaymentController.handleBkashCallback);
 
+// Own payment history. Registered before "/:id" so "mine" is never read as an id.
+router.get(
+	"/mine",
+	auth(Role.RECIPIENT, Role.ADMIN),
+	PaymentController.getMyPayments,
+);
+
 // Retrieve payment status and transaction details
 router.get("/:id", auth(), PaymentController.getPaymentById);
 

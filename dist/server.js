@@ -2859,6 +2859,22 @@ import { Router as Router5 } from "express";
 // src/app/module/payment/payment.controller.ts
 import httpStatus15 from "http-status";
 
+// src/app/module/payment/payment.query.ts
+import { z as z9 } from "zod";
+var positiveInteger4 = (maximum, fallback) => z9.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z9.number().int().min(1).max(maximum)).default(fallback);
+var PAYMENT_SORT_FIELDS = [
+  "createdAt",
+  "amountMinor",
+  "status"
+];
+var myPaymentsQuerySchema = z9.object({
+  page: positiveInteger4(1e6, 1),
+  limit: positiveInteger4(50, 10),
+  status: z9.nativeEnum(PaymentStatus).optional(),
+  sortBy: z9.enum(PAYMENT_SORT_FIELDS).default("createdAt"),
+  sortOrder: z9.enum(["asc", "desc"]).default("desc")
+}).strict();
+
 // src/app/module/payment/payment.service.ts
 import { createHash, randomBytes } from "crypto";
 import httpStatus14 from "http-status";
@@ -3305,6 +3321,43 @@ var handleBkashCallback = async (payload, ipAddress) => {
   }
   return toCallbackResult(confirmed ?? payment);
 };
+var getMyPayments = async (payerId, filters) => {
+  const { page, limit, status, sortBy, sortOrder } = filters;
+  const where = { payerId, ...status ? { status } : {} };
+  const [total, rows] = await Promise.all([
+    prisma.payment.count({ where }),
+    prisma.payment.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
+      select: {
+        id: true,
+        requestId: true,
+        status: true,
+        paymentMethod: true,
+        currency: true,
+        amountMinor: true,
+        paymentId: true,
+        transactionId: true,
+        failureReason: true,
+        createdAt: true,
+        request: {
+          select: { id: true, bloodGroup: true, hospitalName: true }
+        }
+      }
+    })
+  ]);
+  return {
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    result: rows.map(({ request, ...row }) => ({
+      ...toPaymentSummary(row),
+      transactionId: row.transactionId,
+      failureReason: row.failureReason,
+      request
+    }))
+  };
+};
 var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
   const payment = await prisma.payment.findFirst({
     where: {
@@ -3350,38 +3403,39 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
   return payment;
 };
 var PaymentService = {
+  getMyPayments,
   initiateBkashPayment,
   handleBkashCallback,
   getPaymentById
 };
 
 // src/app/module/payment/payment.validation.ts
-import { z as z9 } from "zod";
-var amountSchema = z9.union([z9.string(), z9.number()]).transform((value, ctx) => {
+import { z as z10 } from "zod";
+var amountSchema = z10.union([z10.string(), z10.number()]).transform((value, ctx) => {
   const minor = parseDecimalToMinor(value);
   if (minor === null) {
     ctx.addIssue({
       code: "custom",
       message: `Amount must be a BDT value with at most two decimals between ${formatMinor(MIN_AMOUNT_MINOR)} and ${formatMinor(MAX_AMOUNT_MINOR)}`
     });
-    return z9.NEVER;
+    return z10.NEVER;
   }
   return minor;
 });
-var createPaymentSchema = z9.object({
-  body: z9.object({
-    requestId: z9.string().uuid("Valid blood request ID (UUID) is required"),
+var createPaymentSchema = z10.object({
+  body: z10.object({
+    requestId: z10.string().uuid("Valid blood request ID (UUID) is required"),
     amount: amountSchema
   }).strict().transform(({ requestId, amount }) => ({ requestId, amountMinor: amount }))
 });
-var idempotencyKeySchema = z9.string().regex(
+var idempotencyKeySchema = z10.string().regex(
   /^[A-Za-z0-9_-]{16,64}$/,
   "Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'"
 );
-var bkashCallbackSchema = z9.object({
-  body: z9.object({
-    paymentID: z9.string().min(1, "paymentID is required"),
-    status: z9.string().optional()
+var bkashCallbackSchema = z10.object({
+  body: z10.object({
+    paymentID: z10.string().min(1, "paymentID is required"),
+    status: z10.string().optional()
   })
 });
 var PaymentValidation = {
@@ -3465,6 +3519,17 @@ var handleBkashCallback2 = catchAsync(async (req, res) => {
     data: result
   });
 });
+var getMyPayments2 = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const filters = myPaymentsQuerySchema.parse(req.query);
+  const result = await PaymentService.getMyPayments(req.user.userId, filters);
+  sendResponse(res, {
+    statusCode: httpStatus15.OK,
+    success: true,
+    message: "Payments retrieved successfully",
+    data: result
+  });
+});
 var getPaymentById2 = catchAsync(async (req, res) => {
   const id = req.params.id;
   const userId = req.user.userId;
@@ -3478,6 +3543,7 @@ var getPaymentById2 = catchAsync(async (req, res) => {
   });
 });
 var PaymentController = {
+  getMyPayments: getMyPayments2,
   initiateBkashPayment: initiateBkashPayment2,
   handleBkashCallback: handleBkashCallback2,
   getPaymentById: getPaymentById2
@@ -3493,6 +3559,11 @@ router5.post(
 );
 router5.post("/bkash/callback", PaymentController.handleBkashCallback);
 router5.get("/bkash/callback", PaymentController.handleBkashCallback);
+router5.get(
+  "/mine",
+  auth(Role.RECIPIENT, Role.ADMIN),
+  PaymentController.getMyPayments
+);
 router5.get("/:id", auth(), PaymentController.getPaymentById);
 var PaymentRoutes = router5;
 
@@ -3625,27 +3696,27 @@ var UserController = {
 };
 
 // src/app/module/user/user.validation.ts
-import { z as z10 } from "zod";
-var updateProfileValidationSchema = z10.object({
-  body: z10.object({
-    name: z10.string().min(2, "Name must be at least 2 characters").optional(),
-    phone: z10.string().optional(),
-    address: z10.string().optional()
+import { z as z11 } from "zod";
+var updateProfileValidationSchema = z11.object({
+  body: z11.object({
+    name: z11.string().min(2, "Name must be at least 2 characters").optional(),
+    phone: z11.string().optional(),
+    address: z11.string().optional()
   })
 });
-var updateDonorProfileValidationSchema = z10.object({
-  body: z10.object({
-    bloodGroup: z10.nativeEnum(BloodGroup, {
+var updateDonorProfileValidationSchema = z11.object({
+  body: z11.object({
+    bloodGroup: z11.nativeEnum(BloodGroup, {
       error: "Invalid blood group"
     }).optional(),
-    isAvailable: z10.boolean().optional(),
-    lastDonationDate: z10.string().refine((val) => !Number.isNaN(Date.parse(val)), {
+    isAvailable: z11.boolean().optional(),
+    lastDonationDate: z11.string().refine((val) => !Number.isNaN(Date.parse(val)), {
       message: "Invalid date format for lastDonationDate (e.g. YYYY-MM-DD or ISO string)"
     }).optional().nullable(),
-    phone: z10.string().optional(),
-    address: z10.string().optional(),
-    latitude: z10.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
-    longitude: z10.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
+    phone: z11.string().optional(),
+    address: z11.string().optional(),
+    latitude: z11.number().min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90").optional(),
+    longitude: z11.number().min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180").optional()
   })
 });
 var UserValidation = {

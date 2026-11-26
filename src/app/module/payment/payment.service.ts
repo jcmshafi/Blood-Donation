@@ -15,6 +15,7 @@ import {
 	BkashDeclinedError,
 	isBkashConfigured,
 } from "./bkash.client";
+import type { MyPaymentsQuery } from "./payment.query";
 import type {
 	IBkashCallbackPayload,
 	IBkashExecutePaymentResponse,
@@ -408,6 +409,46 @@ const handleBkashCallback = async (
 	return toCallbackResult(confirmed ?? payment);
 };
 
+const getMyPayments = async (payerId: string, filters: MyPaymentsQuery) => {
+	const { page, limit, status, sortBy, sortOrder } = filters;
+	const where = { payerId, ...(status ? { status } : {}) };
+
+	const [total, rows] = await Promise.all([
+		prisma.payment.count({ where }),
+		prisma.payment.findMany({
+			where,
+			skip: (page - 1) * limit,
+			take: limit,
+			orderBy: [{ [sortBy]: sortOrder }, { id: "asc" }],
+			select: {
+				id: true,
+				requestId: true,
+				status: true,
+				paymentMethod: true,
+				currency: true,
+				amountMinor: true,
+				paymentId: true,
+				transactionId: true,
+				failureReason: true,
+				createdAt: true,
+				request: {
+					select: { id: true, bloodGroup: true, hospitalName: true },
+				},
+			},
+		}),
+	]);
+
+	return {
+		meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+		result: rows.map(({ request, ...row }) => ({
+			...toPaymentSummary(row),
+			transactionId: row.transactionId,
+			failureReason: row.failureReason,
+			request,
+		})),
+	};
+};
+
 const getPaymentById = async (
 	paymentIdOrRecordId: string,
 	userId: string,
@@ -462,6 +503,7 @@ const getPaymentById = async (
 };
 
 export const PaymentService = {
+	getMyPayments,
 	initiateBkashPayment,
 	handleBkashCallback,
 	getPaymentById,

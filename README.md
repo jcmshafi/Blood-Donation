@@ -254,6 +254,7 @@ Generates production-bundled standalone files in the `dist/` folder:
 |---|---|---|---|
 | `POST` | `/api/v1/payments/bkash/create` | `RECIPIENT`, `ADMIN` | Initiate bKash Tokenized Checkout payment (requires `Idempotency-Key` header; see PAYMENT_BKASH_INIT.md) |
 | `POST` | `/api/v1/payments/bkash/callback` | Public / Gateway | Handle bKash checkout webhook & execute |
+| `GET` | `/api/v1/payments/mine` | `RECIPIENT`, `ADMIN` | Own payment history (paginated; see PAYMENT_HISTORY_API.md) |
 | `GET` | `/api/v1/payments/:id` | Payer / `ADMIN` | Retrieve payment transaction receipt |
 
 ### 🛡️ Admin Moderation & Analytics (`/api/v1/admin`)

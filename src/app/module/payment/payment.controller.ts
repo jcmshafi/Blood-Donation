@@ -4,6 +4,7 @@ import config from "../../config/index";
 import { AppError } from "../../utils/AppError";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
+import { myPaymentsQuerySchema } from "./payment.query";
 import { PaymentService } from "./payment.service";
 import { idempotencyKeySchema } from "./payment.validation";
 
@@ -103,6 +104,20 @@ const handleBkashCallback = catchAsync(async (req: Request, res: Response) => {
 	});
 });
 
+const getMyPayments = catchAsync(async (req: Request, res: Response) => {
+	res.setHeader("Cache-Control", "private, no-store");
+	const filters = myPaymentsQuerySchema.parse(req.query);
+	// Scope comes from the session only; the query cannot name a payer.
+	const result = await PaymentService.getMyPayments(req.user!.userId, filters);
+
+	sendResponse(res, {
+		statusCode: httpStatus.OK,
+		success: true,
+		message: "Payments retrieved successfully",
+		data: result,
+	});
+});
+
 const getPaymentById = catchAsync(async (req: Request, res: Response) => {
 	const id = req.params.id as string;
 	const userId = req.user!.userId;
@@ -119,6 +134,7 @@ const getPaymentById = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const PaymentController = {
+	getMyPayments,
 	initiateBkashPayment,
 	handleBkashCallback,
 	getPaymentById,
