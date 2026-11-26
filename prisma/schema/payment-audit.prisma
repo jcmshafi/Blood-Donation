@@ -26,6 +26,15 @@ model Payment {
   @@map("payments")
 }
 
+// Stripe webhook events already processed (event IDs are unique), so replays do nothing.
+model PaymentWebhookEvent {
+  id          String   @id // Stripe event ID (evt_...)
+  type        String
+  processedAt DateTime @default(now())
+
+  @@map("payment_webhook_events")
+}
+
 model AuditLog {
   id         String   @id @default(uuid())
   userId     String?

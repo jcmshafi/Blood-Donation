@@ -29,7 +29,7 @@ The collection uses dynamic collection variables that automatically chain tokens
 | `requestId` | *Auto-set* | Active emergency blood request UUID |
 | `donationId` | *Auto-set* | Created blood donation assignment UUID |
 | `paymentId` | *Auto-set* | Internal payment record UUID |
-| `bkashPaymentId` | *Auto-set* | bKash tokenized gateway transaction ID |
+| `stripeSessionId` | *Auto-set* | Stripe Checkout Session ID of the last payment (also `paymentIdempotencyKey`, `checkoutUrl`) |
 
 ---
 
@@ -55,9 +55,10 @@ The collection uses dynamic collection variables that automatically chain tokens
 | | `POST` | `/api/v1/blood-requests/:id/accept` | `DONOR` | Accept request (pessimistic concurrency lock) |
 | | `PATCH` | `/api/v1/donations/:id/status` | Donor / Recipient / Admin | Mark `COMPLETED` & start 90-day cooldown |
 | | `GET` | `/api/v1/donations/my-history` | `DONOR` | Get personal donation history & cooldown stats |
-| **Phase 5** | `POST` | `/api/v1/payments/bkash/create` | `RECIPIENT`, `ADMIN` | Create bKash tokenized payment for logistics |
-| | `POST` | `/api/v1/payments/bkash/callback` | Public / Webhook | Execute bKash transaction on callback |
-| | `GET` | `/api/v1/payments/:id` | Payer / `ADMIN` | Retrieve transaction receipt and status |
+| **Phase 5** | `POST` | `/api/v1/payments/stripe/checkout` | `RECIPIENT`, `ADMIN` | Start a Stripe Checkout in test mode (`Idempotency-Key` header required) |
+| | `GET` | `/api/v1/payments/mine` | `RECIPIENT`, `ADMIN` | Own payment history (paginated, status filter, sort) |
+| | `GET` | `/api/v1/payments/:id` | Payer / `ADMIN` | Retrieve payment status (internal fields omitted) |
+| | `POST` | `/api/v1/payments/bkash/create` | any | Retired: answers `410 Gone` |
 | **Phase 6** | `GET` | `/api/v1/admin/users` | `ADMIN` | Paginated user management directory |
 | | `PATCH` | `/api/v1/admin/users/:id/status` | `ADMIN` | Suspend (`BLOCKED`) or restore (`ACTIVE`) user |
 | | `GET` | `/api/v1/admin/dashboard-stats` | `ADMIN` | Real-time platform analytics & metrics |
@@ -257,49 +258,61 @@ The collection uses dynamic collection variables that automatically chain tokens
 
 ---
 
-### 💳 Phase 5 — Real bKash Tokenized Payments
+### 💳 Phase 5 — Stripe Payments (Test Mode)
 
-#### 1. Initiate bKash Payment
+bKash checkout was retired because its sandbox rejects every callback URL; old bKash payments stay readable. Needs `STRIPE_SECRET_KEY` (`sk_test_...`) and `FRONTEND_URL` in the server `.env` (live keys are refused; without them initiation answers `503`). `{{requestId}}` must be a non-deleted, non-cancelled request: create one with Phase 3 request 1, and re-run it if you ran the delete step.
+
+#### 1. Start Stripe Checkout (idempotent)
 - **Method:** `POST`
-- **URL:** `{{baseUrl}}/api/v1/payments/bkash/create`
-- **Access:** `Bearer Token (RECIPIENT or ADMIN)`
-- **Request Body:**
+- **URL:** `{{baseUrl}}/api/v1/payments/stripe/checkout`
+- **Access:** `Bearer Token (RECIPIENT or ADMIN)`; the payer is always the authenticated user
+- **Headers:** `Idempotency-Key: <16-64 chars: letters, digits, - or _>` (required). Request 18 generates one per run into `{{paymentIdempotencyKey}}`.
+- **Request Body (strict):**
 ```json
 {
   "requestId": "{{requestId}}",
-  "amount": 500,
-  "purpose": "Emergency ambulance & blood transport logistics fund"
+  "amount": "1200.50"
 }
 ```
+`amount`: string or number, at most two decimals, 10.00 to 500,000.00. Extra fields such as `payerId`, `status` or `currency` return `400`.
 - **Success Response (`201 Created`):**
 ```json
 {
   "success": true,
-  "statusCode": 201,
-  "message": "bKash payment initiated successfully",
+  "message": "Stripe checkout started successfully",
   "data": {
-    "paymentId": "7f8e9d0a-...",
-    "bkashPaymentId": "TR001180123456",
-    "bkashURL": "https://sandbox.payment.bkash.com/redirect/...",
-    "amount": 500,
-    "currency": "BDT",
-    "status": "PENDING"
+    "payment": {
+      "id": "7f8e9d0a-...",
+      "requestId": "...",
+      "status": "PENDING",
+      "paymentMethod": "STRIPE",
+      "currency": "BDT",
+      "amount": "1200.50",
+      "paymentId": "cs_test_...",
+      "createdAt": "2026-11-27T10:00:00.000Z"
+    },
+    "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_..."
   }
 }
 ```
+- **Other outcomes:** `200` replay of the same key (same attempt and URL, no second Stripe call); `422` key reused with a different request or amount; `400` missing/invalid key, amount or body, or an amount below Stripe's minimum; `404` unknown request; `502` Stripe could not create the Checkout (attempt stored as `FAILED`; retry with a new key); `503` key or `FRONTEND_URL` not configured. Requests 18b to 18i cover these.
+- **Paying:** open `{{checkoutUrl}}` in a browser and use test card `4242 4242 4242 4242` with any future expiry and any CVC (declined: `4000 0000 0000 9995`, 3-D Secure: `4000 0025 0000 3155`). Stripe returns the browser to `FRONTEND_URL/payment/success?payment=<id>` or `.../payment/cancel?payment=<id>` (record ID only). A payment becomes `COMPLETED` only through the verified Stripe webhook (next backend step), so until then it stays `PENDING`.
 
-#### 2. bKash Webhook Callback
-- **Method:** `POST` & `GET`
-- **URL:** `{{baseUrl}}/api/v1/payments/bkash/callback`
-- **Access:** Public (bKash gateway callback redirect)
-- **Request Body:**
-```json
-{
-  "paymentID": "{{bkashPaymentId}}",
-  "status": "success"
-}
-```
-- **Behavior:** Calls bKash `/tokenized/checkout/execute`, validates transaction status, saves `trxID`, marks payment `COMPLETED`, and creates an immutable audit trail.
+#### 2. Get Payment Details
+- **Method:** `GET`
+- **URL:** `{{baseUrl}}/api/v1/payments/:id` (record ID or Stripe session ID / legacy bKash `paymentId`)
+- **Access:** the payer or `ADMIN` (`403` otherwise, `401` signed out)
+- **Response:** the payment with `request` and `payer` summaries and the legacy fields (including `amountMinor`, in minor units). It never returns `paymentExecuteResponse`, `idempotencyKey`, `initiationFingerprint` or `checkoutUrl`.
+
+#### 3. My Payment History
+- **Method:** `GET`
+- **URL:** `{{baseUrl}}/api/v1/payments/mine?page=1&limit=10&status=PENDING&sortBy=createdAt&sortOrder=desc`
+- **Access:** `RECIPIENT`, `ADMIN` (own payments only; scope comes from the token)
+- **Query (strict):** `page`, `limit` (1-50, default 10), `status` (`PENDING|COMPLETED|FAILED|CANCELLED`), `sortBy` (`createdAt|amountMinor|status`), `sortOrder`. Unknown keys such as `payerId` return `400`.
+- **Response:** `{ meta: { page, limit, total, totalPages }, result: [ { id, requestId, status, paymentMethod, currency, amount, paymentId, createdAt, transactionId, failureReason, request: { id, bloodGroup, hospitalName } } ] }`
+
+#### 4. Retired bKash Checkout
+- **Method:** `POST` `{{baseUrl}}/api/v1/payments/bkash/create` answers `410 Gone` with a pointer to the Stripe endpoint (request 18i).
 
 ---
 
@@ -307,7 +320,8 @@ The collection uses dynamic collection variables that automatically chain tokens
 
 #### 1. List All Users Directory
 - **Method:** `GET`
-- **URL:** `{{baseUrl}}/api/v1/admin/users?page=1&limit=10&role=DONOR&status=ACTIVE`
+- **URL:** `{{baseUrl}}/api/v1/admin/users?page=1&limit=10&role=DONOR&status=ACTIVE&sortBy=name&sortOrder=asc`
+- **Validation:** strict query. `sortBy` is one of `createdAt|updatedAt|name|email|role|status`, `limit` is capped at 100, unknown keys return `400` (requests 21b to 21d).
 - **Access:** `Bearer Token (ADMIN strictly required)`
 
 #### 2. Suspend / Restore User Account
@@ -331,11 +345,12 @@ The collection uses dynamic collection variables that automatically chain tokens
   - User metrics: Total users, donors count, recipients count, admins count
   - Donor health: Available donors vs donors currently in 90-day cooldown
   - Blood Request metrics: Total requests, pending, fulfilled, canceled, count by urgency (`CRITICAL`, `URGENT`, `REGULAR`)
-  - Financial metrics: Total logistics funds collected (BDT), completed bKash transactions count
+  - Financial metrics: Total logistics funds collected (BDT), completed payments count
 
 #### 4. System Audit Logs
 - **Method:** `GET`
-- **URL:** `{{baseUrl}}/api/v1/admin/audit-logs?page=1&limit=20`
+- **URL:** `{{baseUrl}}/api/v1/admin/audit-logs?page=1&limit=20&sortBy=action&sortOrder=asc`
+- **Validation:** strict query; `sortBy` is one of `createdAt|action|resource`, `limit` is capped at 100, unknown keys return `400` (requests 24c, 24d).
 - **Access:** `Bearer Token (ADMIN strictly required)`
 - **Description:** Complete immutable audit trail capturing administrative moderation, status changes, and financial completions.
 

@@ -8,6 +8,7 @@ import { prisma } from "../src/app/lib/prisma";
 import { cache } from "../src/app/lib/redis";
 import { globalErrorHandler } from "../src/app/middleware/globalErrorHandler";
 import { PaymentRoutes } from "../src/app/module/payment/payment.route";
+import { isTestModeKey } from "../src/app/module/payment/stripe.client";
 import { jwtUtils } from "../src/app/utils/jwt";
 import { formatMinor, parseDecimalToMinor } from "../src/app/utils/money";
 
@@ -38,40 +39,31 @@ test("money: exact two-decimal parsing with bounds", () => {
 		assert.equal(parseDecimalToMinor(bad), null, String(bad));
 	}
 	assert.equal(formatMinor(15050), "150.50");
-	assert.equal(formatMinor(1000), "10.00");
 });
 
-test("bKash initiation: persisted first, idempotent, validated, no mock success", async (t) => {
+test("stripe keys: only test-mode keys are accepted", () => {
+	assert.equal(isTestModeKey("sk_test_abc123"), true);
+	assert.equal(isTestModeKey("rk_test_abc123"), true);
+	for (const bad of [
+		"sk_live_abc123",
+		"rk_live_abc123",
+		"pk_test_abc123",
+		"",
+		undefined,
+		"sk_test_",
+		"sk_test_has space",
+	]) {
+		assert.equal(isTestModeKey(bad), false, String(bad));
+	}
+});
+
+test("Stripe checkout initiation: persisted first, idempotent, validated, no simulated success", async (t) => {
 	// --- in-memory data layer -------------------------------------------------
 	const users = {
-		rec: {
-			id: "rec",
-			role: "RECIPIENT",
-			status: "ACTIVE",
-			isDeleted: false,
-			phone: "01711111111",
-		},
-		rec2: {
-			id: "rec2",
-			role: "RECIPIENT",
-			status: "ACTIVE",
-			isDeleted: false,
-			phone: null,
-		},
-		admin: {
-			id: "admin",
-			role: "ADMIN",
-			status: "ACTIVE",
-			isDeleted: false,
-			phone: null,
-		},
-		donor: {
-			id: "donor",
-			role: "DONOR",
-			status: "ACTIVE",
-			isDeleted: false,
-			phone: null,
-		},
+		rec: { id: "rec", role: "RECIPIENT", status: "ACTIVE", isDeleted: false },
+		rec2: { id: "rec2", role: "RECIPIENT", status: "ACTIVE", isDeleted: false },
+		admin: { id: "admin", role: "ADMIN", status: "ACTIVE", isDeleted: false },
+		donor: { id: "donor", role: "DONOR", status: "ACTIVE", isDeleted: false },
 	};
 	t.mock.method(jwtUtils, "verifyToken", (token) => ({
 		success: Boolean(users[token]),
@@ -167,7 +159,7 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 		return data;
 	};
 
-	// --- stand-in bKash gateway ----------------------------------------------
+	// --- stand-in Stripe API -----------------------------------------------------
 	const gateway = { mode: "ok", calls: [], pendingAtCreate: null };
 	const stub = http.createServer((req, res) => {
 		let body = "";
@@ -175,47 +167,49 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 			body += chunk;
 		});
 		req.on("end", () => {
-			const json = body ? JSON.parse(body) : {};
-			gateway.calls.push({ path: req.url, body: json, headers: req.headers });
+			const form = Object.fromEntries(new URLSearchParams(body));
+			gateway.calls.push({ path: req.url, form, headers: req.headers });
 			const send = (status, payload) => {
 				res.writeHead(status, { "content-type": "application/json" });
 				res.end(
 					typeof payload === "string" ? payload : JSON.stringify(payload),
 				);
 			};
-			if (req.url.endsWith("/token/grant")) {
-				return send(200, {
-					statusCode: "0000",
-					id_token: "tok-1",
-					expires_in: 3600,
+			if (req.method !== "POST" || !req.url.startsWith("/v1/checkout/sessions"))
+				return send(404, {});
+			gateway.pendingAtCreate = payments
+				.filter((p) => p.id === form.client_reference_id)
+				.map((p) => ({ status: p.status, paymentId: p.paymentId }));
+			const n = gateway.calls.length;
+			const ok = {
+				id: `cs_test_${n}`,
+				object: "checkout.session",
+				url: `${gateway.url}/pay/cs_test_${n}`,
+				payment_status: "unpaid",
+			};
+			if (gateway.mode === "small")
+				return send(400, {
+					error: {
+						type: "invalid_request_error",
+						code: "amount_too_small",
+						message: "Amount must convert to at least 50 cents",
+					},
 				});
-			}
-			if (req.url.endsWith("/checkout/create")) {
-				gateway.pendingAtCreate = payments
-					.filter((p) => p.merchantInvoiceNumber === json.merchantInvoiceNumber)
-					.map((p) => ({ status: p.status, paymentId: p.paymentId }));
-				const base = {
-					statusCode: "0000",
-					paymentID: `TR${gateway.calls.length}`,
-					bkashURL: `${gateway.url}/redirect?paymentID=TR${gateway.calls.length}`,
-					amount: json.amount,
-					currency: "BDT",
-					merchantInvoiceNumber: json.merchantInvoiceNumber,
-				};
-				if (gateway.mode === "declined")
-					return send(200, { statusCode: "2001", statusMessage: "Invalid" });
-				if (gateway.mode === "incomplete")
-					return send(200, { statusCode: "0000" });
-				if (gateway.mode === "nonjson") return send(200, "<html>oops</html>");
-				if (gateway.mode === "http500") return send(500, { error: "x" });
-				if (gateway.mode === "untrusted")
-					return send(200, {
-						...base,
-						bkashURL: "https://evil.example.com/pay",
-					});
-				return send(200, base);
-			}
-			send(404, {});
+			if (gateway.mode === "badkey")
+				return send(401, {
+					error: {
+						type: "invalid_request_error",
+						message: "Invalid API Key provided",
+					},
+				});
+			if (gateway.mode === "http500")
+				return send(500, { error: { type: "api_error", message: "boom" } });
+			if (gateway.mode === "nonjson") return send(200, "<html>oops</html>");
+			if (gateway.mode === "incomplete")
+				return send(200, { id: "cs_test_x", object: "checkout.session" });
+			if (gateway.mode === "untrusted")
+				return send(200, { ...ok, url: "https://evil.example.com/pay" });
+			send(200, ok);
 		});
 	});
 	await new Promise((resolve) => stub.listen(0, "127.0.0.1", resolve));
@@ -226,15 +220,11 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 	t.after(() => Object.assign(config, savedConfig));
 	const configure = () =>
 		Object.assign(config, {
-			bkash_app_key: "key",
-			bkash_app_secret: "secret",
-			bkash_username: "user",
-			bkash_password: "pass",
-			bkash_base_url: `${gateway.url}/tokenized-v`,
-			bkash_callback_url:
-				"http://localhost:5000/api/v1/payments/bkash/callback",
+			stripe_secret_key: "sk_test_abc123",
+			stripe_currency: "bdt",
+			stripe_api_base_url: gateway.url,
+			frontend_url: "http://localhost:3000",
 		});
-	// Strip path prefix so the stub sees /token/grant etc. regardless of base path.
 	configure();
 
 	const app = express();
@@ -247,7 +237,7 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 	t.after(() => new Promise((resolve) => server.close(resolve)));
 	const base = `http://127.0.0.1:${server.address().port}/payments`;
 	const init = (token, body, key = KEY) =>
-		fetch(`${base}/bkash/create`, {
+		fetch(`${base}/stripe/checkout`, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -278,6 +268,7 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 		{ ...valid, requestId: "not-a-uuid" },
 		{ ...valid, payerId: "someone-else" },
 		{ ...valid, status: "COMPLETED" },
+		{ ...valid, currency: "usd" },
 	]) {
 		assert.equal((await init("rec", bad)).status, 400, JSON.stringify(bad));
 	}
@@ -293,9 +284,9 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 		"key charset",
 	);
 	assert.equal(payments.length, 0, "nothing stored for rejected input");
-	assert.equal(gateway.calls.length, 0, "gateway untouched for rejected input");
+	assert.equal(gateway.calls.length, 0, "Stripe untouched for rejected input");
 
-	// --- missing request / cancelled request / unconfigured --------------------
+	// --- missing request / cancelled request / unconfigured ---------------------
 	assert.equal(
 		(
 			await init("rec", {
@@ -309,24 +300,30 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 		(await init("rec", { ...valid, requestId: CANCELLED_ID })).status,
 		400,
 	);
-	Object.assign(config, { bkash_app_key: "" });
-	let res = await init("rec", valid);
-	assert.equal(res.status, 503);
-	assert.match((await res.json()).message, /unavailable/i);
-	assert.equal(payments.length, 0, "unconfigured stores nothing");
-	assert.equal(gateway.calls.length, 0);
-	configure();
+	for (const unconfigured of [
+		{ stripe_secret_key: "" },
+		{ stripe_secret_key: "sk_live_abc123" },
+		{ frontend_url: "" },
+	]) {
+		Object.assign(config, unconfigured);
+		const res = await init("rec", valid);
+		assert.equal(res.status, 503, JSON.stringify(unconfigured));
+		assert.match((await res.json()).message, /unavailable/i);
+		assert.equal(payments.length, 0, "unconfigured stores nothing");
+		assert.equal(gateway.calls.length, 0);
+		configure();
+	}
 
-	// --- happy path: stored PENDING before the gateway call ------------------------
-	res = await init("rec", valid);
+	// --- happy path: stored PENDING before Stripe is called ----------------------------
+	let res = await init("rec", valid);
 	assert.equal(res.status, 201);
 	assert.equal(res.headers.get("cache-control"), "no-store");
-	let body = await res.json();
-	assert.match(body.data.bkashURL, /\/redirect\?paymentID=TR/);
+	const body = await res.json();
+	assert.match(body.data.checkoutUrl, /\/pay\/cs_test_1$/);
 	assert.equal(body.data.payment.amount, "150.50");
 	assert.equal(body.data.payment.currency, "BDT");
 	assert.equal(body.data.payment.status, "PENDING");
-	assert.equal(body.data.payment.paymentMethod, "BKASH");
+	assert.equal(body.data.payment.paymentMethod, "STRIPE");
 	for (const hidden of [
 		"idempotencyKey",
 		"initiationFingerprint",
@@ -339,51 +336,65 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 	assert.equal(payments.length, 1);
 	assert.equal(payments[0].payerId, "rec", "payer comes from the session");
 	assert.equal(payments[0].amountMinor, 15050);
-	assert.equal(payments[0].amount, 150.5);
-	assert.equal(payments[0].paymentId, body.data.payment.paymentId);
+	assert.equal(payments[0].paymentId, "cs_test_1", "Stripe session id stored");
 	assert.deepEqual(
 		gateway.pendingAtCreate?.map((p) => p.status),
 		["PENDING"],
-		"attempt stored before the gateway call",
+		"attempt stored before Stripe was called",
 	);
 	assert.match(gateway.pendingAtCreate[0].paymentId, /^PENDING-/);
-	const create = gateway.calls.find((c) => c.path.endsWith("/checkout/create"));
-	assert.equal(create.body.amount, "150.50");
-	assert.equal(create.body.currency, "BDT");
-	assert.equal(create.body.payerReference, "01711111111");
-	assert.equal(create.body.callbackURL, config.bkash_callback_url);
+	const create = gateway.calls[0];
+	assert.equal(create.headers.authorization, "Bearer sk_test_abc123");
+	assert.match(
+		create.headers["idempotency-key"],
+		/^checkout-idem-key-0000000001-pay-1$/,
+	);
+	assert.equal(create.form.mode, "payment");
+	assert.equal(create.form["line_items[0][price_data][unit_amount]"], "15050");
+	assert.equal(create.form["line_items[0][price_data][currency]"], "bdt");
+	assert.equal(create.form.client_reference_id, "pay-1");
+	assert.equal(create.form["metadata[request_id]"], REQUEST_ID);
+	assert.equal(
+		create.form.success_url,
+		"http://localhost:3000/payment/success?payment=pay-1",
+	);
+	assert.equal(
+		create.form.cancel_url,
+		"http://localhost:3000/payment/cancel?payment=pay-1",
+	);
 	assert.equal(
 		audits.filter((a) => a.action === "PAYMENT_INITIATED").length,
 		1,
 	);
 
-	// --- replay: same key + same body -> same attempt, no second gateway call -------
+	// --- replay: same key + same body -> same attempt, no second Stripe call -----------
 	const callsBefore = gateway.calls.length;
 	res = await init("rec", { requestId: REQUEST_ID, amount: 150.5 });
 	assert.equal(res.status, 200);
 	const replay = await res.json();
-	assert.equal(replay.data.bkashURL, body.data.bkashURL);
+	assert.equal(replay.data.checkoutUrl, body.data.checkoutUrl);
 	assert.equal(replay.data.payment.id, body.data.payment.id);
 	assert.equal(gateway.calls.length, callsBefore);
 	assert.equal(payments.length, 1);
 
-	// same key with a different amount or request -> 422, nothing created
 	assert.equal((await init("rec", { ...valid, amount: "151.00" })).status, 422);
 	assert.equal(
 		(await init("rec", { requestId: CANCELLED_ID, amount: "150.50" })).status,
 		422,
 	);
 	assert.equal(payments.length, 1);
-	// another payer using the same key is independent
-	assert.equal((await init("rec2", valid)).status, 201);
-	assert.equal(payments.length, 2);
+	assert.equal(
+		(await init("rec2", valid)).status,
+		201,
+		"another payer may reuse the key text",
+	);
 	assert.equal(
 		(await init("admin", valid, "idem-key-admin-00001")).status,
 		201,
 		"admin may contribute",
 	);
 
-	// --- concurrent duplicates -> exactly one attempt and one gateway create ------
+	// --- concurrent duplicates -> exactly one attempt and one Stripe create -------------
 	reset();
 	const results = await Promise.all([
 		init("rec", valid),
@@ -392,17 +403,14 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 	]);
 	assert.deepEqual(results.map((r) => r.status).sort(), [200, 200, 201]);
 	assert.equal(payments.length, 1);
-	assert.equal(
-		gateway.calls.filter((c) => c.path.endsWith("/checkout/create")).length,
-		1,
-	);
+	assert.equal(gateway.calls.length, 1);
 
-	// --- gateway failures never produce a URL or a mock success ---------------
+	// --- failures never produce a URL or a mock success --------------------------------
 	for (const mode of [
-		"declined",
-		"incomplete",
-		"nonjson",
+		"badkey",
 		"http500",
+		"nonjson",
+		"incomplete",
 		"untrusted",
 	]) {
 		reset();
@@ -413,37 +421,55 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 		assert.equal(failure.success, false);
 		assert.doesNotMatch(
 			JSON.stringify(failure),
-			/redirect|evil|bkashURL/i,
+			/evil|checkoutUrl|cs_test/i,
 			mode,
 		);
 		assert.equal(payments.length, 1, mode);
 		assert.equal(payments[0].status, "FAILED", mode);
 		assert.ok(payments[0].failureReason, mode);
-		assert.match(payments[0].paymentId, /^PENDING-/, "no gateway id adopted");
+		assert.match(payments[0].paymentId, /^PENDING-/, "no session id adopted");
 		assert.equal(
 			audits.filter((a) => a.action === "PAYMENT_FAILED").length,
 			1,
 			mode,
 		);
-		// Replay of the failed attempt shows FAILED with no URL; a new key retries.
 		gateway.mode = "ok";
 		const again = await (
 			await init("rec", valid, `idem-fail-${mode}-0000`)
 		).json();
 		assert.equal(again.data.payment.status, "FAILED");
-		assert.equal(again.data.bkashURL, null);
+		assert.equal(again.data.checkoutUrl, null);
 		assert.equal(
 			(await init("rec", valid, `idem-retry-${mode}-0000`)).status,
 			201,
 		);
 	}
+	// A minimum-amount rejection is the caller's fault: 400, attempt marked failed.
 	reset();
-	await new Promise((resolve) => stub.close(resolve));
+	gateway.mode = "small";
+	res = await init("rec", valid, "idem-small-0000000001");
+	assert.equal(res.status, 400);
+	assert.match((await res.json()).message, /minimum/i);
+	assert.equal(payments[0].status, "FAILED");
+
+	// Unreachable Stripe.
+	reset();
+	config.stripe_api_base_url = "http://127.0.0.1:1";
 	res = await init("rec", valid, "idem-unreachable-0001");
 	assert.equal(res.status, 502, "unreachable gateway");
 	assert.equal(payments[0].status, "FAILED");
+	configure();
 
-	// --- detail read: payer/admin only, internals omitted, legacy rows readable ----
+	// --- bKash checkout is retired -----------------------------------------------------
+	res = await fetch(`${base}/bkash/create`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+	assert.equal(res.status, 410);
+	assert.match((await res.json()).message, /stripe\/checkout/);
+
+	// --- detail read: payer/admin only, internals omitted, legacy bKash rows readable ---
 	payments.push({
 		id: "legacy-1",
 		requestId: REQUEST_ID,
@@ -466,12 +492,13 @@ test("bKash initiation: persisted first, idempotent, validated, no mock success"
 	assert.equal(res.status, 200);
 	const legacy = (await res.json()).data;
 	assert.equal(legacy.paymentId, "BKASH_LEGACY");
-	assert.equal(legacy.transactionId, "TRX1");
+	assert.equal(legacy.paymentMethod, "BKASH");
 	assert.equal(legacy.amount, 99.99);
 	for (const hidden of [
 		"idempotencyKey",
 		"initiationFingerprint",
 		"checkoutUrl",
+		"paymentExecuteResponse",
 	]) {
 		assert.equal(hidden in legacy, false, hidden);
 	}

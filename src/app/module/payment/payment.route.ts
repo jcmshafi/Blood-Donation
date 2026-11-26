@@ -7,13 +7,16 @@ import { PaymentValidation } from "./payment.validation";
 
 const router = Router();
 
-// Initiate bKash tokenized checkout payment
+// Start a Stripe Checkout (test mode) payment
 router.post(
-	"/bkash/create",
+	"/stripe/checkout",
 	auth(Role.RECIPIENT, Role.ADMIN),
 	validateRequest(PaymentValidation.createPaymentSchema),
-	PaymentController.initiateBkashPayment,
+	PaymentController.initiateStripePayment,
 );
+
+// bKash checkout is retired (410); its callback stays until the Stripe webhook replaces it.
+router.post("/bkash/create", PaymentController.retiredBkashCreate);
 
 // bKash callback endpoint (accepts POST and GET redirects)
 router.post("/bkash/callback", PaymentController.handleBkashCallback);

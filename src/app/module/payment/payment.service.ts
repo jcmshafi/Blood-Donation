@@ -6,6 +6,7 @@ import {
 	RequestStatus,
 	Role,
 } from "../../../generated/prisma/enums";
+import config from "../../config/index";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
 import { paymentReceiptEmailHtml, sendEmail } from "../../utils/sendEmail";
@@ -15,6 +16,11 @@ import {
 	BkashDeclinedError,
 	isBkashConfigured,
 } from "./bkash.client";
+import {
+	isStripeConfigured,
+	StripeGateway,
+	StripeGatewayError,
+} from "./stripe.client";
 import type { MyPaymentsQuery } from "./payment.query";
 import type {
 	IBkashCallbackPayload,
@@ -51,10 +57,10 @@ const fingerprintOf = (requestId: string, amountMinor: number) =>
 	createHash("sha256").update(`${requestId}|${amountMinor}`).digest("hex");
 
 /**
- * Starts a bKash checkout. The pending attempt is stored before the gateway is
+ * Starts a Stripe Checkout (test mode). The pending attempt is stored before Stripe is
  * contacted; a repeated Idempotency-Key replays the stored attempt.
  */
-const initiateBkashPayment = async (
+const initiateStripePayment = async (
 	payerId: string,
 	payload: ICreatePaymentPayload,
 	idempotencyKey: string,
@@ -76,7 +82,7 @@ const initiateBkashPayment = async (
 		return {
 			replayed: true as const,
 			payment: toPaymentSummary(existing),
-			bkashURL:
+			checkoutUrl:
 				existing.status === PaymentStatus.PENDING ? existing.checkoutUrl : null,
 		};
 	};
@@ -84,7 +90,7 @@ const initiateBkashPayment = async (
 	const replayed = await replay();
 	if (replayed) return replayed;
 
-	if (!isBkashConfigured()) {
+	if (!isStripeConfigured()) {
 		throw new AppError(
 			httpStatus.SERVICE_UNAVAILABLE,
 			"Payments are temporarily unavailable",
@@ -104,16 +110,9 @@ const initiateBkashPayment = async (
 		);
 	}
 
-	const payer = await prisma.user.findUnique({
-		where: { id: payerId },
-		select: { phone: true },
-	});
-	const cleanPhone = payer?.phone?.replace(/\D/g, "") || "";
-	const payerReference = cleanPhone.length === 11 ? cleanPhone : "01700000000";
-
 	const invoiceNumber = `INV-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
-	// Persist the attempt first. paymentId is replaced by bKash's paymentID once known.
+	// Persist the attempt first. paymentId is replaced by the Stripe session ID once known.
 	let attempt: Awaited<ReturnType<typeof prisma.payment.create>>;
 	try {
 		attempt = await prisma.payment.create({
@@ -122,8 +121,8 @@ const initiateBkashPayment = async (
 				payerId,
 				amount: payload.amountMinor / 100,
 				amountMinor: payload.amountMinor,
-				currency: "BDT",
-				paymentMethod: PaymentMethod.BKASH,
+				currency: config.stripe_currency.toUpperCase(),
+				paymentMethod: PaymentMethod.STRIPE,
 				paymentId: `PENDING-${randomBytes(16).toString("hex")}`,
 				merchantInvoiceNumber: invoiceNumber,
 				idempotencyKey,
@@ -146,7 +145,7 @@ const initiateBkashPayment = async (
 			resource: "Payment",
 			resourceId: attempt.id,
 			details: {
-				provider: "BKASH",
+				provider: "STRIPE",
 				amountMinor: attempt.amountMinor,
 				currency: attempt.currency,
 				requestId: attempt.requestId,
@@ -156,30 +155,46 @@ const initiateBkashPayment = async (
 		},
 	});
 
+	const returnUrl = (page: "success" | "cancel") => {
+		const url = new URL(`/payment/${page}`, config.frontend_url as string);
+		url.searchParams.set("payment", attempt.id);
+		return url.toString();
+	};
+
 	try {
-		const bkashResponse = await BkashClient.createPayment({
-			amount: formatMinor(payload.amountMinor),
-			invoiceNumber,
-			payerReference,
+		const session = await StripeGateway.createCheckoutSession({
+			paymentRecordId: attempt.id,
+			requestId: payload.requestId,
+			amountMinor: payload.amountMinor,
+			currency: config.stripe_currency.toLowerCase(),
+			idempotencyKey,
+			successUrl: returnUrl("success"),
+			cancelUrl: returnUrl("cancel"),
 		});
 		const updated = await prisma.payment.update({
 			where: { id: attempt.id },
-			data: {
-				paymentId: bkashResponse.paymentID,
-				checkoutUrl: bkashResponse.bkashURL,
-			},
+			data: { paymentId: session.id, checkoutUrl: session.url },
 		});
 		return {
 			replayed: false as const,
 			payment: toPaymentSummary(updated),
-			bkashURL: bkashResponse.bkashURL as string | null,
+			checkoutUrl: session.url as string | null,
 		};
-	} catch {
+	} catch (error) {
+		// Log the gateway reason for operators only (no credentials); callers get a generic message.
+		console.error(
+			"Stripe checkout creation failed:",
+			error instanceof Error ? error.message : error,
+		);
+		const tooSmall =
+			error instanceof StripeGatewayError && error.code === "amount_too_small";
 		await prisma.payment.update({
 			where: { id: attempt.id },
 			data: {
 				status: PaymentStatus.FAILED,
-				failureReason: "Gateway could not create a checkout session",
+				failureReason: tooSmall
+					? "Amount is below the minimum the payment provider accepts"
+					: "Gateway could not create a checkout session",
 			},
 		});
 		await prisma.auditLog.create({
@@ -188,14 +203,22 @@ const initiateBkashPayment = async (
 				action: "PAYMENT_FAILED",
 				resource: "Payment",
 				resourceId: attempt.id,
-				details: { stage: "initiation", reason: "gateway_error" },
+				details: {
+					stage: "initiation",
+					reason: tooSmall ? "amount_too_small" : "gateway_error",
+				},
 				ipAddress,
 			},
 		});
-		throw new AppError(
-			httpStatus.BAD_GATEWAY,
-			"The payment gateway could not start checkout. Please try again.",
-		);
+		throw tooSmall
+			? new AppError(
+					httpStatus.BAD_REQUEST,
+					"That amount is below the minimum the payment provider accepts. Please enter a larger amount.",
+				)
+			: new AppError(
+					httpStatus.BAD_GATEWAY,
+					"The payment gateway could not start checkout. Please try again.",
+				);
 	}
 };
 
@@ -504,7 +527,7 @@ const getPaymentById = async (
 
 export const PaymentService = {
 	getMyPayments,
-	initiateBkashPayment,
+	initiateStripePayment,
 	handleBkashCallback,
 	getPaymentById,
 };

@@ -1716,27 +1716,220 @@
       ]
     },
     {
-      "name": "Phase 5 - Real bKash Payments",
-      "description": "Endpoints 18-20: Official bKash Tokenized Checkout API integration. Create payment, bKash callback & payment execution, transaction verification, AuditLog persistence, and payment record lookup with RBAC.",
+      "name": "Phase 5 - Stripe Payments (Test Mode)",
+      "description": "Endpoints 18-20: Stripe Checkout in test mode. Initiation is idempotent (Idempotency-Key header) and payment history is payer-scoped. bKash checkout was retired (its sandbox rejects every callback URL); old bKash payments stay readable.\n\nRequires STRIPE_SECRET_KEY (sk_test_...) and FRONTEND_URL in the server .env; without them initiation answers 503. {{requestId}} must be a non-deleted, non-cancelled request: create one with Phase 3 request 1, and re-run it if you ran the delete step (6).\n\nPay in a browser: open {{checkoutUrl}} and use test card 4242 4242 4242 4242 with any future expiry and any CVC (declined: 4000 0000 0000 9995, 3-D Secure: 4000 0025 0000 3155). A payment becomes COMPLETED only through the verified Stripe webhook (added in the next backend step), so it stays PENDING until then.",
       "item": [
         {
-          "name": "18. Initiate bKash Payment (POST /api/v1/payments/bkash/create)",
+          "name": "18. Start Stripe Checkout (POST /api/v1/payments/stripe/checkout)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// One fresh attempt key per run; the replay/mismatch requests below reuse it.",
+                  "pm.collectionVariables.set('paymentIdempotencyKey', 'postman-' + pm.variables.replaceIn('{{$guid}}'));"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Pending attempt with exact amount and a Stripe Checkout URL', function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.payment.status).to.eql('PENDING');",
+                  "    pm.expect(res.data.payment.amount).to.eql('1200.50');",
+                  "    pm.expect(res.data.payment.paymentMethod).to.eql('STRIPE');",
+                  "    pm.expect(res.data.checkoutUrl).to.match(/^https:\\/\\/checkout\\.stripe\\.com\\//);",
+                  "    pm.expect(res.data.payment.paymentId).to.match(/^cs_test_/);",
+                  "});",
+                  "pm.test('Response is minimal and never exposes internals or the payer', function () {",
+                  "    ['idempotencyKey', 'initiationFingerprint', 'checkoutUrl', 'payerId', 'payer'].forEach(function (key) {",
+                  "        pm.expect(res.data.payment).to.not.have.property(key);",
+                  "    });",
+                  "});",
+                  "pm.collectionVariables.set('paymentId', res.data.payment.id);",
+                  "pm.collectionVariables.set('stripeSessionId', res.data.payment.paymentId);",
+                  "pm.collectionVariables.set('checkoutUrl', res.data.checkoutUrl);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{paymentIdempotencyKey}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "### Endpoint Overview\nStarts a Stripe Checkout (test mode) for transport support. The pending attempt is stored before Stripe is called.\n\n**Access:** Bearer token (RECIPIENT or ADMIN). The payer is always the authenticated user.\n\n**Headers:** `Idempotency-Key` (required, 16-64 characters of letters, digits, `-` or `_`).\n\n**Body (strict):**\n| Field | Constraints |\n|---|---|\n| `requestId` | UUID of a non-cancelled blood request |\n| `amount` | string or number, at most two decimals, 10.00 to 500,000.00 |\n\n**Responses:** `201` new attempt `{ payment, checkoutUrl }`; `200` replay of the same key; `400` invalid body/key/amount or amount below Stripe's minimum; `404` unknown request; `422` key reused with a different request or amount; `502` Stripe could not create the Checkout (attempt stored as FAILED, use a new key); `503` Stripe key or FRONTEND_URL not configured (live keys are refused).\n\nAfter 201, open `{{checkoutUrl}}` in a browser and pay with test card 4242 4242 4242 4242.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1200.50\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18b. Replay Same Idempotency-Key (200, same attempt)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status code is 201 Created', function () {",
-                  "    pm.response.to.have.status(201);",
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
                   "});",
                   "var res = pm.response.json();",
-                  "pm.test('Payment initiated with bkashURL and paymentId', function () {",
-                  "    pm.expect(res.success).to.eql(true);",
-                  "    pm.expect(res.data.payment.id).to.be.a('string');",
-                  "    pm.expect(res.data.payment.status).to.eql('PENDING');",
-                  "    pm.expect(res.data.bkashURL).to.be.a('string');",
-                  "    pm.collectionVariables.set('paymentId', res.data.payment.id);",
-                  "    pm.collectionVariables.set('bkashPaymentId', res.data.payment.paymentId);",
+                  "pm.test('Same attempt and URL, no second payment', function () {",
+                  "    pm.expect(res.data.payment.id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "    pm.expect(res.data.checkoutUrl).to.eql(pm.collectionVariables.get('checkoutUrl'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{paymentIdempotencyKey}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "Repeats request 18 with the same key and body. The backend returns the stored attempt (200) without calling Stripe again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1200.50\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18c. Same Key, Different Amount (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{paymentIdempotencyKey}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "A key may only be reused for the identical request and amount.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1300.00\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18d. Missing Idempotency-Key (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -1757,10 +1950,286 @@
                 "type": "text"
               }
             ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "The header is required.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": 1200\n}"
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1200.50\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18e. Invalid Amounts Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-invalid-amount-0001",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
             },
+            "description": "Below the 10.00 minimum. Also rejected: more than two decimals (`150.555`), negatives, non-numbers, above 500,000.00 and float noise.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"9.99\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18f. Payer/Status/Currency Tampering Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-tamper-attempt-0001",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "The body is strict: client-supplied payer, status or currency fields are refused.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"100\",\n  \"payerId\": \"{{donorUserId}}\",\n  \"status\": \"COMPLETED\",\n  \"currency\": \"usd\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18g. Donor Cannot Start Checkout (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-donor-attempt-0001",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "Only RECIPIENT and ADMIN roles may start a checkout.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1200.50\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18h. Signed-Out Cannot Start Checkout (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-anon-attempt-00001",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "No Authorization header.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"1200.50\"\n}"
+            }
+          }
+        },
+        {
+          "name": "18i. bKash Checkout Is Retired (410)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 410', function () {",
+                  "    pm.response.to.have.status(410);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Points to the Stripe endpoint', function () {",
+                  "    pm.expect(res.message).to.include('stripe/checkout');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/bkash/create",
               "host": [
@@ -1774,78 +2243,39 @@
                 "create"
               ]
             },
-            "description": "### 📋 Endpoint Overview\nInitiates a bKash Tokenized Checkout payment to fund emergency ambulance and blood logistics transport.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `requestId` | string (UUID of associated blood request, required, {{requestId}}) |\n| `amount` | number (positive BDT amount, e.g. 500, required) |\n| `purpose` | string (e.g. 'Emergency ambulance transport fee', required) |\n\n**✅ Success Response:**\n- `201 Created - Returns local payment record, bKash paymentID, and `bkashURL` redirect gateway URL.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Invalid amount or missing requestId`\n- `401 Unauthorized`\n- `404 Not Found - Blood request does not exist`\n- `502 Bad Gateway - bKash gateway connection failure`\n\n> **💡 Implementation Note:** Test script captures `paymentId` and `bkashPaymentId` in collection variables."
-          },
-          "response": []
-        },
-        {
-          "name": "19. Execute bKash Payment on Callback (POST /api/v1/payments/bkash/callback)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Status code is 200 OK', function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "var res = pm.response.json();",
-                  "pm.test('Payment executed and status is COMPLETED with trxID', function () {",
-                  "    pm.expect(res.success).to.eql(true);",
-                  "    pm.expect(res.data.status).to.eql('COMPLETED');",
-                  "    pm.expect(res.data.transactionId).to.be.a('string');",
-                  "});"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json",
-                "type": "text"
-              }
-            ],
+            "description": "bKash's sandbox rejects every callback URL, so its checkout was retired. Old bKash payments remain readable.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paymentID\": \"{{bkashPaymentId}}\",\n  \"status\": \"success\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/payments/bkash/callback",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "payments",
-                "bkash",
-                "callback"
-              ]
-            },
-            "description": "### 📋 Endpoint Overview\nHandles bKash Tokenized Checkout callback, executes transaction with bKash, and writes an audit log.\n\n**🔒 Access Control & Authentication:**\n`Public / Webhook Callback (bKash Gateway)`\n\n**📨 Request Headers:**\n- `Content-Type`: `application/json`\n\n**📦 Request Body Schema (JSON):**\n| Field | Description / Constraints |\n|---|---|\n| `paymentID` | string (bKash payment ID, {{bkashPaymentId}}, required) |\n| `status` | 'success' | 'failure' | 'cancel' (required) |\n\n**✅ Success Response:**\n- `200 OK - Returns completed payment record with bKash trxID, invoice number, and execution timestamp.`\n\n**❌ Potential Error Responses:**\n- `400 Bad Request - Payment canceled or failed at bKash gateway`\n- `404 Not Found - Local payment transaction record not found`\n- `502 Bad Gateway - bKash verification failed`"
-          },
-          "response": []
+              "raw": "{}"
+            }
+          }
         },
         {
-          "name": "20. Get Payment Details & Status (GET /api/v1/payments/{{paymentId}})",
+          "name": "20. Get Payment Details & Status (GET /api/v1/payments/:id)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status code is 200 OK', function () {",
+                  "pm.test('Status code is 200', function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
                   "var res = pm.response.json();",
-                  "pm.test('Payment details retrieved with payer and request info', function () {",
+                  "pm.test('Own payment with request and payer info', function () {",
                   "    pm.expect(res.success).to.eql(true);",
                   "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get('paymentId'));",
-                  "    pm.expect(res.data.status).to.eql('COMPLETED');",
+                  "    pm.expect(res.data.status).to.be.oneOf(['PENDING', 'COMPLETED', 'FAILED', 'CANCELLED']);",
+                  "    pm.expect(res.data.amountMinor).to.eql(120050);",
                   "    pm.expect(res.data.request).to.be.an('object');",
                   "    pm.expect(res.data.payer).to.be.an('object');",
+                  "});",
+                  "pm.test('Internal and raw gateway fields are not exposed', function () {",
+                  "    ['paymentExecuteResponse', 'idempotencyKey', 'initiationFingerprint', 'checkoutUrl'].forEach(function (key) {",
+                  "        pm.expect(res.data).to.not.have.property(key);",
+                  "    });",
+                  "});",
+                  "pm.test('COMPLETED payments carry a Stripe transaction ID', function () {",
+                  "    if (res.data.status === 'COMPLETED') { pm.expect(res.data.transactionId).to.be.a('string'); }",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -1873,9 +2303,8 @@
                 "{{paymentId}}"
               ]
             },
-            "description": "### 📋 Endpoint Overview\nRetrieves complete transaction details, bKash invoice metadata, and payer information for a payment.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (Payer RECIPIENT or ADMIN)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{recipientAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{paymentId}})\n\n**✅ Success Response:**\n- `200 OK - Returns payment record with amount, currency (BDT), trxID, status, associated blood request, and payer user details.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Caller did not create this payment and is not an ADMIN`\n- `404 Not Found - Payment record not found`"
-          },
-          "response": []
+            "description": "Payer or admin only. Status is COMPLETED only after you pay in Stripe Checkout (open {{checkoutUrl}}), so PENDING is expected right after request 18."
+          }
         },
         {
           "name": "20b. Payment Access Control Verification (Donor blocked 403)",
@@ -1884,11 +2313,11 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status code is 403 Forbidden for unauthorized donor', function () {",
+                  "pm.test('Status code is 403', function () {",
                   "    pm.response.to.have.status(403);",
                   "});",
                   "var res = pm.response.json();",
-                  "pm.test('Security error returned cleanly', function () {",
+                  "pm.test('Rejected cleanly', function () {",
                   "    pm.expect(res.success).to.eql(false);",
                   "});"
                 ],
@@ -1917,9 +2346,355 @@
                 "{{paymentId}}"
               ]
             },
-            "description": "### 📋 Endpoint Overview\nSecurity verification asserting that non-owner donors are blocked with 403 Forbidden from viewing another user's payment records.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `id`: string (UUID route parameter, {{paymentId}})\n\n**✅ Success Response:**\n- `403 Forbidden - Asserts strict ownership check on financial records.`\n\n**❌ Potential Error Responses:**\n- `403 Forbidden - Access denied`"
-          },
-          "response": []
+            "description": "Users who are neither the payer nor an admin cannot read a payment."
+          }
+        },
+        {
+          "name": "20c. Another Recipient Cannot Read This Payment (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherRecipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "Run the Phase 3 setup that populates otherRecipientAccessToken first."
+          }
+        },
+        {
+          "name": "20d. List My Payments (GET /api/v1/payments/mine)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Own payments with pagination meta, newest first', function () {",
+                  "    pm.expect(res.data.result).to.be.an('array');",
+                  "    pm.expect(res.data.meta).to.have.keys(['page', 'limit', 'total', 'totalPages']);",
+                  "    pm.expect(res.data.meta.page).to.eql(1);",
+                  "    var ids = res.data.result.map(function (p) { return p.id; });",
+                  "    pm.expect(ids).to.include(pm.collectionVariables.get('paymentId'));",
+                  "});",
+                  "pm.test('Items are safe summaries', function () {",
+                  "    res.data.result.forEach(function (p) {",
+                  "        pm.expect(p.amount).to.be.a('string');",
+                  "        pm.expect(p).to.not.have.any.keys('payerId', 'payer', 'paymentExecuteResponse', 'idempotencyKey', 'initiationFingerprint', 'checkoutUrl');",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "The payer's own payments only (scope comes from the token). Query: page, limit (1-50), status, sortBy (createdAt|amountMinor|status), sortOrder."
+          }
+        },
+        {
+          "name": "20e. My Payments With Status Filter and Sort",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Only PENDING rows, ascending by amount', function () {",
+                  "    res.data.result.forEach(function (p) { pm.expect(p.status).to.eql('PENDING'); });",
+                  "    var amounts = res.data.result.map(function (p) { return parseFloat(p.amount); });",
+                  "    pm.expect(amounts).to.eql(amounts.slice().sort(function (a, b) { return a - b; }));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine?status=PENDING&sortBy=amountMinor&sortOrder=asc&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "amountMinor"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "asc"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": "Status filter and allow-listed sorting."
+          }
+        },
+        {
+          "name": "20f. Identity Tampering on My Payments Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine?payerId={{donorUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "payerId",
+                  "value": "{{donorUserId}}"
+                }
+              ]
+            },
+            "description": "The query is strict: payerId, userId and any unknown key are refused, so the scope can only come from the token."
+          }
+        },
+        {
+          "name": "20g. Out-of-Range Limit Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine?limit=51",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "51"
+                }
+              ]
+            },
+            "description": "limit is capped at 50."
+          }
+        },
+        {
+          "name": "20h. Donor Cannot List Payments (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donorAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ]
+            },
+            "description": "Only RECIPIENT and ADMIN roles."
+          }
+        },
+        {
+          "name": "20i. Signed-Out Cannot List Payments (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/mine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "mine"
+              ]
+            },
+            "description": "No Authorization header."
+          }
         }
       ]
     },
@@ -1986,6 +2761,168 @@
             "description": "### 📋 Endpoint Overview\nAdministrative user directory supporting multi-attribute filtering by role, status, search term, and pagination.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (ADMIN role strictly required)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{adminAccessToken}}`\n\n**🔍 Parameters (Path / Query):**\n- `page`: integer (default 1)\n- `limit`: integer (default 10)\n- `role`: 'DONOR' | 'RECIPIENT' | 'ADMIN' (optional)\n- `status`: 'ACTIVE' | 'BLOCKED' (optional)\n- `searchTerm`: string (searches name, email, phone, optional)\n\n**✅ Success Response:**\n- `200 OK - Returns paginated user records with nested donor profiles and active request counters.`\n\n**❌ Potential Error Responses:**\n- `401 Unauthorized`\n- `403 Forbidden - Non-admin caller`"
           },
           "response": []
+        },
+        {
+          "name": "21b. Users Sorted by Name (allow-listed sort)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Sorted ascending by name, bounded page size', function () {",
+                  "    var names = res.data.result.map(function (u) { return u.name.toLowerCase(); });",
+                  "    pm.expect(res.data.meta.limit).to.eql(5);",
+                  "    pm.expect(res.data.result.length).to.be.at.most(5);",
+                  "    pm.expect(names).to.eql(names.slice().sort());",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?page=1&limit=5&sortBy=name&sortOrder=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "name"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "sortBy allow-list: createdAt, updatedAt, name, email, role, status. limit is capped at 100."
+          }
+        },
+        {
+          "name": "21c. Users: Invalid Sort Field Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?sortBy=password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "password"
+                }
+              ]
+            },
+            "description": "Unknown or sensitive sort fields never reach the database."
+          }
+        },
+        {
+          "name": "21d. Users: Oversized Page Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/users?limit=101",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "101"
+                }
+              ]
+            },
+            "description": "limit above 100 is refused; unknown query keys are refused too."
+          }
         },
         {
           "name": "22. Suspend/Block User Account (PATCH /api/v1/admin/users/:id/status)",
@@ -2268,6 +3205,117 @@
             "description": "### 📋 Endpoint Overview\nSecurity verification asserting that non-admin tokens (e.g. DONOR) are strictly rejected with 403 Forbidden.\n\n**🔒 Access Control & Authentication:**\n`Bearer Token (DONOR role)`\n\n**📨 Request Headers:**\n- `Authorization`: `Bearer {{donorAccessToken}}`\n\n**✅ Success Response:**\n- `403 Forbidden - Asserts strict RBAC enforcement on administrative routes.`\n\n**❌ Potential Error Responses:**\n- `403 Forbidden - Forbidden resource`"
           },
           "response": []
+        },
+        {
+          "name": "24c. Audit Logs Sorted by Action (allow-listed sort)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Sorted ascending by action', function () {",
+                  "    var actions = res.data.result.map(function (a) { return a.action; });",
+                  "    pm.expect(actions).to.eql(actions.slice().sort());",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/audit-logs?page=1&limit=10&sortBy=action&sortOrder=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "sortBy",
+                  "value": "action"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "sortBy allow-list: createdAt, action, resource."
+          }
+        },
+        {
+          "name": "24d. Audit Logs: Invalid Sort Field Rejected (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/audit-logs?sortBy=details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "details"
+                }
+              ]
+            },
+            "description": "Only allow-listed fields are accepted."
+          }
         }
       ]
     }
@@ -2322,11 +3370,22 @@
       "value": ""
     },
     {
-      "key": "bkashPaymentId",
-      "value": ""
+      "key": "otherRecipientAccessToken",
+      "value": "",
+      "type": "string"
     },
     {
-      "key": "otherRecipientAccessToken",
+      "key": "paymentIdempotencyKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stripeSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "checkoutUrl",
       "value": "",
       "type": "string"
     }

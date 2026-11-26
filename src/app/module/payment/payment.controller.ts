@@ -8,32 +8,34 @@ import { myPaymentsQuerySchema } from "./payment.query";
 import { PaymentService } from "./payment.service";
 import { idempotencyKeySchema } from "./payment.validation";
 
-const initiateBkashPayment = catchAsync(async (req: Request, res: Response) => {
-	const payerId = req.user!.userId;
-	const key = idempotencyKeySchema.safeParse(req.get("idempotency-key"));
-	if (!key.success) {
-		throw new AppError(
-			httpStatus.BAD_REQUEST,
-			"A valid Idempotency-Key header (16-64 characters: letters, digits, '-' or '_') is required",
+const initiateStripePayment = catchAsync(
+	async (req: Request, res: Response) => {
+		const payerId = req.user!.userId;
+		const key = idempotencyKeySchema.safeParse(req.get("idempotency-key"));
+		if (!key.success) {
+			throw new AppError(
+				httpStatus.BAD_REQUEST,
+				"A valid Idempotency-Key header (16-64 characters: letters, digits, '-' or '_') is required",
+			);
+		}
+		const { replayed, ...data } = await PaymentService.initiateStripePayment(
+			payerId,
+			req.body,
+			key.data,
+			req.ip,
 		);
-	}
-	const { replayed, ...data } = await PaymentService.initiateBkashPayment(
-		payerId,
-		req.body,
-		key.data,
-		req.ip,
-	);
 
-	res.setHeader("Cache-Control", "no-store");
-	sendResponse(res, {
-		statusCode: replayed ? httpStatus.OK : httpStatus.CREATED,
-		success: true,
-		message: replayed
-			? "bKash payment attempt already exists"
-			: "bKash payment initiated successfully",
-		data,
-	});
-});
+		res.setHeader("Cache-Control", "no-store");
+		sendResponse(res, {
+			statusCode: replayed ? httpStatus.OK : httpStatus.CREATED,
+			success: true,
+			message: replayed
+				? "Payment attempt already exists"
+				: "Stripe checkout started successfully",
+			data,
+		});
+	},
+);
 
 const OUTCOME_PAGE = {
 	completed: "success",
@@ -51,6 +53,16 @@ const outcomeRedirect = (page: string, paymentRecordId?: string) => {
 	} catch {
 		return null;
 	}
+};
+
+/** bKash checkout was retired: its sandbox rejects every callback URL. Existing bKash records stay readable. */
+const retiredBkashCreate = (_req: Request, res: Response) => {
+	res.status(httpStatus.GONE).json({
+		success: false,
+		message:
+			"bKash checkout has been retired. Use POST /api/v1/payments/stripe/checkout.",
+		errors: [],
+	});
 };
 
 const handleBkashCallback = catchAsync(async (req: Request, res: Response) => {
@@ -134,8 +146,9 @@ const getPaymentById = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const PaymentController = {
+	retiredBkashCreate,
 	getMyPayments,
-	initiateBkashPayment,
+	initiateStripePayment,
 	handleBkashCallback,
 	getPaymentById,
 };
