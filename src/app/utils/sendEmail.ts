@@ -142,30 +142,31 @@ export const donorAssignedEmailHtml = (
 `;
 
 /**
- * HTML Email Template for bKash Payment Receipt
+ * HTML Email Template for a payment receipt
  */
 export const paymentReceiptEmailHtml = (
 	payerName: string,
-	amount: number,
-	trxID: string,
+	amount: string,
+	currency: string,
+	transactionRef: string,
 	paymentID: string,
 ) => `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
 	<div style="background-color: #e11d48; color: white; padding: 20px; text-align: center;">
-		<h1 style="margin: 0; font-size: 24px;">🧾 bKash Payment Receipt</h1>
+		<h1 style="margin: 0; font-size: 24px;">🧾 Payment Receipt</h1>
 		<p style="margin: 5px 0 0 0; opacity: 0.9;">Emergency Logistics & Verification Fee</p>
 	</div>
 	<div style="padding: 24px; color: #1e293b;">
 		<p>Dear <strong>${payerName}</strong>,</p>
-		<p>Your payment via bKash has been verified and completed successfully.</p>
+		<p>Your payment has been verified and completed successfully.</p>
 		<table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
 			<tr>
 				<td style="padding: 8px 0; font-weight: bold;">Amount Paid:</td>
-				<td style="padding: 8px 0; font-size: 18px; color: #e11d48; font-weight: bold;">${amount} BDT</td>
+				<td style="padding: 8px 0; font-size: 18px; color: #e11d48; font-weight: bold;">${amount} ${currency}</td>
 			</tr>
 			<tr>
-				<td style="padding: 8px 0; font-weight: bold;">Transaction ID (TrxID):</td>
-				<td style="padding: 8px 0; font-family: monospace; font-size: 14px;">${trxID}</td>
+				<td style="padding: 8px 0; font-weight: bold;">Transaction reference:</td>
+				<td style="padding: 8px 0; font-family: monospace; font-size: 14px;">${transactionRef}</td>
 			</tr>
 			<tr>
 				<td style="padding: 8px 0; font-weight: bold;">Payment ID:</td>

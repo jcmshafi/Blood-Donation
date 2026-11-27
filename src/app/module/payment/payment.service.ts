@@ -10,24 +10,15 @@ import config from "../../config/index";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/AppError";
 import { paymentReceiptEmailHtml, sendEmail } from "../../utils/sendEmail";
-import { formatMinor, parseStoredAmountToMinor } from "../../utils/money";
-import {
-	BkashClient,
-	BkashDeclinedError,
-	isBkashConfigured,
-} from "./bkash.client";
+import { formatMinor } from "../../utils/money";
+import type Stripe from "stripe";
 import {
 	isStripeConfigured,
 	StripeGateway,
 	StripeGatewayError,
 } from "./stripe.client";
 import type { MyPaymentsQuery } from "./payment.query";
-import type {
-	IBkashCallbackPayload,
-	IBkashExecutePaymentResponse,
-	IBkashQueryPaymentResponse,
-	ICreatePaymentPayload,
-} from "./payment.interface";
+import type { ICreatePaymentPayload } from "./payment.interface";
 
 const RACE_ERROR_CODE = "P2002";
 
@@ -222,9 +213,9 @@ const initiateStripePayment = async (
 	}
 };
 
-type CallbackOutcome = "completed" | "cancelled" | "failed" | "pending";
+type PaymentOutcome = "completed" | "cancelled" | "failed" | "pending";
 
-const OUTCOME_BY_STATUS: Record<PaymentStatus, CallbackOutcome> = {
+const OUTCOME_BY_STATUS: Record<PaymentStatus, PaymentOutcome> = {
 	[PaymentStatus.COMPLETED]: "completed",
 	[PaymentStatus.CANCELLED]: "cancelled",
 	[PaymentStatus.FAILED]: "failed",
@@ -245,7 +236,7 @@ type StoredPayment = {
 	createdAt: Date;
 };
 
-const toCallbackResult = (payment: StoredPayment) => ({
+const toOutcomeResult = (payment: StoredPayment) => ({
 	outcome: OUTCOME_BY_STATUS[payment.status],
 	payment: {
 		...toPaymentSummary(payment),
@@ -254,22 +245,32 @@ const toCallbackResult = (payment: StoredPayment) => ({
 	},
 });
 
-/** Does a bKash execute/query response match the stored attempt and report completion? */
-const matchesStoredPayment = (
-	payment: StoredPayment,
-	data: {
-		paymentID?: string;
-		trxID?: string;
-		transactionStatus?: string;
-		amount?: string;
-		currency?: string;
-	},
-) =>
-	data.paymentID === payment.paymentId &&
-	Boolean(data.trxID) &&
-	data.transactionStatus?.toLowerCase() === "completed" &&
-	data.currency === payment.currency &&
-	parseStoredAmountToMinor(data.amount) === payment.amountMinor;
+type SessionFacts = Pick<
+	Stripe.Checkout.Session,
+	| "id"
+	| "status"
+	| "payment_status"
+	| "amount_total"
+	| "currency"
+	| "payment_intent"
+	| "client_reference_id"
+>;
+
+const PENDING_PREFIX = "PENDING-";
+
+/** A paid session that matches the stored attempt on amount, currency and identity. */
+const sessionMatchesPayment = (payment: StoredPayment, session: SessionFacts) =>
+	session.payment_status === "paid" &&
+	session.amount_total === payment.amountMinor &&
+	session.currency?.toUpperCase() === payment.currency &&
+	(session.id === payment.paymentId ||
+		(payment.paymentId.startsWith(PENDING_PREFIX) &&
+			session.client_reference_id === payment.id));
+
+const paymentIntentId = (session: SessionFacts) =>
+	typeof session.payment_intent === "string"
+		? session.payment_intent
+		: (session.payment_intent?.id ?? null);
 
 /**
  * Settles a PENDING payment exactly once. Only the caller whose conditional update
@@ -282,7 +283,8 @@ const settlePending = async (
 		action: string;
 		reason?: string;
 		transactionId?: string;
-		executeResponse?: object;
+		sessionId?: string;
+		gatewayRecord?: object;
 	},
 	ipAddress?: string,
 ) => {
@@ -292,20 +294,21 @@ const settlePending = async (
 			status: next.status,
 			...(next.reason ? { failureReason: next.reason } : {}),
 			...(next.transactionId ? { transactionId: next.transactionId } : {}),
-			...(next.executeResponse
-				? { paymentExecuteResponse: next.executeResponse as object }
+			...(next.sessionId ? { paymentId: next.sessionId } : {}),
+			...(next.gatewayRecord
+				? { paymentExecuteResponse: next.gatewayRecord as object }
 				: {}),
 		},
 	});
 
 	const current = await prisma.payment.findUnique({
-		where: { paymentId: payment.paymentId },
+		where: { id: payment.id },
 		include: { payer: { select: { id: true, name: true, email: true } } },
 	});
 	if (!current) {
 		throw new AppError(httpStatus.NOT_FOUND, "Payment transaction not found");
 	}
-	if (claimed.count === 0) return current; // another callback already settled it
+	if (claimed.count === 0) return current; // another request already settled it
 
 	await prisma.auditLog.create({
 		data: {
@@ -314,7 +317,7 @@ const settlePending = async (
 			resource: "Payment",
 			resourceId: payment.id,
 			details: {
-				provider: "BKASH",
+				provider: payment.paymentMethod,
 				status: next.status,
 				amountMinor: payment.amountMinor,
 				currency: payment.currency,
@@ -328,11 +331,12 @@ const settlePending = async (
 	if (next.status === PaymentStatus.COMPLETED && current.payer?.email) {
 		sendEmail({
 			to: current.payer.email,
-			subject: `bKash Payment Receipt: ${formatMinor(current.amountMinor)} BDT (TrxID: ${current.transactionId})`,
+			subject: `Payment Receipt: ${formatMinor(current.amountMinor)} ${current.currency}`,
 			html: paymentReceiptEmailHtml(
 				current.payer.name,
-				current.amountMinor / 100,
-				current.transactionId || "N/A",
+				formatMinor(current.amountMinor),
+				current.currency,
+				current.transactionId || current.paymentId,
 				current.paymentId,
 			),
 		}).catch((err) =>
@@ -342,94 +346,229 @@ const settlePending = async (
 	return current;
 };
 
-/**
- * bKash redirect handler. The browser `status` is only a hint for which check to run:
- * the stored attempt changes only after bKash confirms the outcome server-to-server,
- * a settled payment is never changed, and an outage leaves the payment PENDING.
- */
-const handleBkashCallback = async (
-	payload: IBkashCallbackPayload,
+/** Completes the payment when Stripe reports it paid and it matches the attempt; otherwise records a mismatch. */
+const settlePaidSession = (
+	payment: StoredPayment,
+	session: SessionFacts,
 	ipAddress?: string,
-) => {
-	const payment = await prisma.payment.findUnique({
-		where: { paymentId: payload.paymentID },
-	});
-	if (!payment) {
-		throw new AppError(httpStatus.NOT_FOUND, "Payment transaction not found");
-	}
-	if (payment.status !== PaymentStatus.PENDING) {
-		return toCallbackResult(payment);
-	}
-
-	const complete = (
-		data: IBkashExecutePaymentResponse | IBkashQueryPaymentResponse,
-	) =>
-		matchesStoredPayment(payment, data)
-			? settlePending(
-					payment,
-					{
-						status: PaymentStatus.COMPLETED,
-						action: "PAYMENT_COMPLETED",
-						transactionId: data.trxID,
-						executeResponse: data,
-					},
-					ipAddress,
-				)
-			: settlePending(
-					payment,
-					{
-						status: PaymentStatus.FAILED,
-						action: "PAYMENT_VERIFICATION_FAILED",
-						reason: "Gateway response did not match the payment",
-					},
-					ipAddress,
-				);
-
-	let confirmed: StoredPayment | null = null;
-
-	if (payload.status === "success") {
-		try {
-			const executed = await BkashClient.executePayment(payload.paymentID);
-			confirmed = await complete(executed);
-		} catch (error) {
-			if (!(error instanceof BkashDeclinedError)) {
-				return toCallbackResult(payment); // outage: stay PENDING
-			}
-			// Declined (for example already executed): fall through to the status query.
-		}
-	}
-
-	if (!confirmed) {
-		let remote: IBkashQueryPaymentResponse;
-		try {
-			remote = await BkashClient.queryPayment(payload.paymentID);
-		} catch {
-			return toCallbackResult(payment); // cannot confirm: stay PENDING
-		}
-		const remoteStatus = remote.transactionStatus.toLowerCase();
-		if (remoteStatus === "completed") {
-			confirmed = await complete(remote);
-		} else if (remoteStatus === "cancelled" || remoteStatus === "canceled") {
-			confirmed = await settlePending(
+) =>
+	sessionMatchesPayment(payment, session)
+		? settlePending(
 				payment,
-				{ status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
+				{
+					status: PaymentStatus.COMPLETED,
+					action: "PAYMENT_COMPLETED",
+					transactionId: paymentIntentId(session) ?? session.id,
+					sessionId: session.id,
+					gatewayRecord: {
+						sessionId: session.id,
+						paymentIntent: paymentIntentId(session),
+						amountTotal: session.amount_total,
+						currency: session.currency,
+					},
+				},
+				ipAddress,
+			)
+		: settlePending(
+				payment,
+				{
+					status: PaymentStatus.FAILED,
+					action: "PAYMENT_VERIFICATION_FAILED",
+					reason: "Gateway response did not match the payment",
+				},
 				ipAddress,
 			);
-		} else if (remoteStatus === "failed" || remoteStatus === "expired") {
-			confirmed = await settlePending(
+
+const findPaymentForSession = async (session: SessionFacts) => {
+	const bySession = await prisma.payment.findUnique({
+		where: { paymentId: session.id },
+	});
+	if (bySession) return bySession;
+	// The webhook can arrive before the session ID is stored on the attempt.
+	if (session.client_reference_id) {
+		const byReference = await prisma.payment.findUnique({
+			where: { id: session.client_reference_id },
+		});
+		if (byReference?.paymentId.startsWith(PENDING_PREFIX)) return byReference;
+	}
+	return null;
+};
+
+const HANDLED_STRIPE_EVENTS = new Set([
+	"checkout.session.completed",
+	"checkout.session.async_payment_succeeded",
+	"checkout.session.async_payment_failed",
+	"checkout.session.expired",
+]);
+
+/**
+ * Applies one verified Stripe webhook event. The event ID is recorded after a successful
+ * run, so a failed run is retried by Stripe and a replay does nothing. Only PENDING payments
+ * change: a later expired/failed event can never overwrite COMPLETED.
+ */
+const handleStripeEvent = async (event: Stripe.Event, ipAddress?: string) => {
+	if (!HANDLED_STRIPE_EVENTS.has(event.type)) return { handled: false };
+	const seen = await prisma.paymentWebhookEvent.findUnique({
+		where: { id: event.id },
+	});
+	if (seen) return { handled: true, duplicate: true };
+
+	const session = event.data.object as Stripe.Checkout.Session;
+	const payment = await findPaymentForSession(session);
+	if (!payment) {
+		console.error(
+			"Stripe webhook for an unknown checkout session:",
+			session.id,
+		);
+	} else if (payment.status === PaymentStatus.PENDING) {
+		if (
+			event.type === "checkout.session.completed" ||
+			event.type === "checkout.session.async_payment_succeeded"
+		) {
+			// An asynchronous method completes the session before money arrives: wait for the success event.
+			if (session.payment_status === "paid") {
+				await settlePaidSession(payment, session, ipAddress);
+			}
+		} else {
+			await settlePending(
 				payment,
 				{
 					status: PaymentStatus.FAILED,
 					action: "PAYMENT_FAILED",
-					reason: "bKash reported the payment as unsuccessful",
+					reason:
+						event.type === "checkout.session.expired"
+							? "Checkout session expired"
+							: "Payment could not be completed",
 				},
 				ipAddress,
 			);
 		}
-		// Still initiated/authorized at bKash: nothing is confirmed, stay PENDING.
 	}
 
-	return toCallbackResult(confirmed ?? payment);
+	try {
+		await prisma.paymentWebhookEvent.create({
+			data: { id: event.id, type: event.type },
+		});
+	} catch (error) {
+		if ((error as { code?: string }).code !== RACE_ERROR_CODE) throw error;
+	}
+	return { handled: true, duplicate: false };
+};
+
+/**
+ * Re-checks a PENDING Stripe payment with Stripe itself (used when a webhook is late or missed).
+ * Goes through the same verification as the webhook; a Stripe outage leaves it untouched.
+ */
+const reconcileStripePayment = async (
+	payment: StoredPayment,
+	ipAddress?: string,
+) => {
+	if (
+		payment.paymentMethod !== PaymentMethod.STRIPE ||
+		payment.status !== PaymentStatus.PENDING ||
+		!payment.paymentId.startsWith("cs_")
+	) {
+		return false;
+	}
+	let session: Stripe.Checkout.Session;
+	try {
+		session = await StripeGateway.retrieveCheckoutSession(payment.paymentId);
+	} catch {
+		return false;
+	}
+	if (session.payment_status === "paid") {
+		await settlePaidSession(payment, session, ipAddress);
+		return true;
+	}
+	if (session.status === "expired") {
+		await settlePending(
+			payment,
+			{
+				status: PaymentStatus.FAILED,
+				action: "PAYMENT_FAILED",
+				reason: "Checkout session expired",
+			},
+			ipAddress,
+		);
+		return true;
+	}
+	return false;
+};
+
+const loadAuthorizedPayment = async (
+	paymentIdOrRecordId: string,
+	userId: string,
+	userRole: Role,
+) => {
+	const payment = await prisma.payment.findFirst({
+		where: {
+			OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }],
+		},
+	});
+	if (!payment) {
+		throw new AppError(httpStatus.NOT_FOUND, "Payment record not found");
+	}
+	if (userRole !== Role.ADMIN && payment.payerId !== userId) {
+		throw new AppError(
+			httpStatus.FORBIDDEN,
+			"You do not have permission to view this payment record",
+		);
+	}
+	return payment;
+};
+
+/**
+ * The payer leaves Checkout. CANCELLED is recorded only after Stripe confirms the session is
+ * unpaid (an open session is expired at Stripe first); a paid session completes instead.
+ */
+const cancelStripePayment = async (
+	paymentIdOrRecordId: string,
+	userId: string,
+	userRole: Role,
+	ipAddress?: string,
+) => {
+	const payment = await loadAuthorizedPayment(
+		paymentIdOrRecordId,
+		userId,
+		userRole,
+	);
+	if (payment.status !== PaymentStatus.PENDING) return toOutcomeResult(payment);
+	if (
+		payment.paymentMethod !== PaymentMethod.STRIPE ||
+		!payment.paymentId.startsWith("cs_")
+	) {
+		return toOutcomeResult(payment);
+	}
+
+	try {
+		let session = await StripeGateway.retrieveCheckoutSession(
+			payment.paymentId,
+		);
+		if (session.payment_status === "paid") {
+			return toOutcomeResult(
+				await settlePaidSession(payment, session, ipAddress),
+			);
+		}
+		if (session.status === "open") {
+			session = await StripeGateway.expireCheckoutSession(payment.paymentId);
+		}
+		if (session.status === "expired" && session.payment_status !== "paid") {
+			return toOutcomeResult(
+				await settlePending(
+					payment,
+					{ status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
+					ipAddress,
+				),
+			);
+		}
+		return toOutcomeResult(payment);
+	} catch (error) {
+		if (error instanceof AppError) throw error;
+		throw new AppError(
+			httpStatus.BAD_GATEWAY,
+			"The payment gateway could not confirm this payment yet. Please try again.",
+		);
+	}
 };
 
 const getMyPayments = async (payerId: string, filters: MyPaymentsQuery) => {
@@ -476,40 +615,43 @@ const getPaymentById = async (
 	paymentIdOrRecordId: string,
 	userId: string,
 	userRole: Role,
+	ipAddress?: string,
 ) => {
-	const payment = await prisma.payment.findFirst({
-		where: {
-			OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }],
-		},
-		omit: {
-			paymentExecuteResponse: true,
-			idempotencyKey: true,
-			initiationFingerprint: true,
-			checkoutUrl: true,
-		},
-		include: {
-			request: {
-				select: {
-					id: true,
-					patientName: true,
-					bloodGroup: true,
-					hospitalName: true,
-					hospitalAddress: true,
-					urgency: true,
-					status: true,
+	const load = () =>
+		prisma.payment.findFirst({
+			where: {
+				OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }],
+			},
+			omit: {
+				paymentExecuteResponse: true,
+				idempotencyKey: true,
+				initiationFingerprint: true,
+				checkoutUrl: true,
+			},
+			include: {
+				request: {
+					select: {
+						id: true,
+						patientName: true,
+						bloodGroup: true,
+						hospitalName: true,
+						hospitalAddress: true,
+						urgency: true,
+						status: true,
+					},
+				},
+				payer: {
+					select: {
+						id: true,
+						name: true,
+						email: true,
+						phone: true,
+					},
 				},
 			},
-			payer: {
-				select: {
-					id: true,
-					name: true,
-					email: true,
-					phone: true,
-				},
-			},
-		},
-	});
+		});
 
+	let payment = await load();
 	if (!payment) {
 		throw new AppError(httpStatus.NOT_FOUND, "Payment record not found");
 	}
@@ -522,12 +664,17 @@ const getPaymentById = async (
 		);
 	}
 
+	// A late or missed webhook must not strand a paid payment: ask Stripe, verify, settle.
+	if (await reconcileStripePayment(payment, ipAddress)) {
+		payment = (await load()) ?? payment;
+	}
 	return payment;
 };
 
 export const PaymentService = {
 	getMyPayments,
 	initiateStripePayment,
-	handleBkashCallback,
+	handleStripeEvent,
+	cancelStripePayment,
 	getPaymentById,
 };

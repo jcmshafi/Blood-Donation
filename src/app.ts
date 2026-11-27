@@ -15,7 +15,10 @@ import { AdminRoutes } from "./app/module/admin/admin.route";
 import { AuthRoutes } from "./app/module/auth/auth.route";
 import { BloodRequestRoutes } from "./app/module/bloodRequest/bloodRequest.route";
 import { DonationRoutes } from "./app/module/donation/donation.route";
-import { PaymentRoutes } from "./app/module/payment/payment.route";
+import {
+	PaymentRoutes,
+	stripeWebhookBodyParser,
+} from "./app/module/payment/payment.route";
 import { UserRoutes } from "./app/module/user/user.route";
 
 const app: Application = express();
@@ -39,6 +42,9 @@ app.use(
 
 // Enable URL-encoded form data parsing
 app.use(express.urlencoded({ extended: true }));
+
+// Stripe signs the exact bytes it sends: keep this path raw, before the JSON parser.
+app.use("/api/v1/payments/stripe/webhook", stripeWebhookBodyParser);
 
 // Middleware to parse JSON bodies
 app.use(express.json());

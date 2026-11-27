@@ -1,9 +1,15 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { Role } from "../../../generated/prisma/enums";
 import { auth } from "../../middleware/checkAuth";
 import { validateRequest } from "../../middleware/validateRequest";
 import { PaymentController } from "./payment.controller";
 import { PaymentValidation } from "./payment.validation";
+
+/** Raw body parser for the webhook path. Mount before express.json() so the signature can be verified. */
+export const stripeWebhookBodyParser = express.raw({
+	type: "application/json",
+	limit: "1mb",
+});
 
 const router = Router();
 
@@ -15,12 +21,11 @@ router.post(
 	PaymentController.initiateStripePayment,
 );
 
-// bKash checkout is retired (410); its callback stays until the Stripe webhook replaces it.
+// bKash checkout is retired (410); old bKash records stay readable through GET /:id and /mine.
 router.post("/bkash/create", PaymentController.retiredBkashCreate);
 
-// bKash callback endpoint (accepts POST and GET redirects)
-router.post("/bkash/callback", PaymentController.handleBkashCallback);
-router.get("/bkash/callback", PaymentController.handleBkashCallback);
+// Stripe webhook: unauthenticated, signature-verified, raw body (parser mounted in app.ts).
+router.post("/stripe/webhook", PaymentController.handleStripeWebhook);
 
 // Own payment history. Registered before "/:id" so "mine" is never read as an id.
 router.get(
@@ -28,6 +33,9 @@ router.get(
 	auth(Role.RECIPIENT, Role.ADMIN),
 	PaymentController.getMyPayments,
 );
+
+// The payer leaves Checkout: Stripe confirms the session is unpaid before CANCELLED is recorded.
+router.post("/:id/cancel", auth(), PaymentController.cancelStripePayment);
 
 // Retrieve payment status and transaction details
 router.get("/:id", auth(), PaymentController.getPaymentById);

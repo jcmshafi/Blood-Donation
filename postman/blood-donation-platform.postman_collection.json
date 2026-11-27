@@ -1717,7 +1717,7 @@
     },
     {
       "name": "Phase 5 - Stripe Payments (Test Mode)",
-      "description": "Endpoints 18-20: Stripe Checkout in test mode. Initiation is idempotent (Idempotency-Key header) and payment history is payer-scoped. bKash checkout was retired (its sandbox rejects every callback URL); old bKash payments stay readable.\n\nRequires STRIPE_SECRET_KEY (sk_test_...) and FRONTEND_URL in the server .env; without them initiation answers 503. {{requestId}} must be a non-deleted, non-cancelled request: create one with Phase 3 request 1, and re-run it if you ran the delete step (6).\n\nPay in a browser: open {{checkoutUrl}} and use test card 4242 4242 4242 4242 with any future expiry and any CVC (declined: 4000 0000 0000 9995, 3-D Secure: 4000 0025 0000 3155). A payment becomes COMPLETED only through the verified Stripe webhook (added in the next backend step), so it stays PENDING until then.",
+      "description": "Endpoints 18-20: Stripe Checkout in test mode. Initiation is idempotent (Idempotency-Key header), completion happens only through the signature-verified Stripe webhook (or a server-side re-check with Stripe when you read a PENDING payment), and payment history is payer-scoped. bKash checkout was retired; old bKash payments stay readable.\n\nRequires STRIPE_SECRET_KEY (sk_test_...), STRIPE_WEBHOOK_SECRET (whsec_..., from `stripe listen`) and FRONTEND_URL in the server .env. {{requestId}} must be a non-deleted, non-cancelled request: create one with Phase 3 request 1, and re-run it if you ran the delete step (6).\n\nReal completion: run 18, open {{checkoutUrl}} in a browser, pay with test card 4242 4242 4242 4242 (any future expiry, any CVC) while `stripe listen --forward-to localhost:5000/api/v1/payments/stripe/webhook` is running, then run request 20: status COMPLETED with a transactionId (even without the CLI, reading the payment re-checks it with Stripe). Run the cancel requests (20j-20m) LAST: they cancel an unpaid checkout, so run them on a payment you have not paid, or re-run 18 first to get a fresh attempt. A webhook cannot be sent from Postman because it needs Stripe's signature; 20n only proves unsigned calls are rejected.",
       "item": [
         {
           "name": "18. Start Stripe Checkout (POST /api/v1/payments/stripe/checkout)",
@@ -2695,6 +2695,243 @@
             },
             "description": "No Authorization header."
           }
+        },
+        {
+          "name": "20j. Start a Fresh Checkout to Cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.collectionVariables.set('paymentIdToCancel', res.data.payment.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-cancel-attempt-0001",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "checkout"
+              ]
+            },
+            "description": "Creates a separate unpaid attempt (fixed key; if you re-run the collection, change the key) so the cancel requests below do not touch the payment you paid in the browser.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{requestId}}\",\n  \"amount\": \"50.00\"\n}"
+            }
+          }
+        },
+        {
+          "name": "20k. Another Recipient Cannot Cancel (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 403', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherRecipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentIdToCancel}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentIdToCancel}}",
+                "cancel"
+              ]
+            },
+            "description": "Only the payer or an admin may cancel."
+          }
+        },
+        {
+          "name": "20l. Signed-Out Cannot Cancel (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Rejected cleanly', function () {",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentIdToCancel}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentIdToCancel}}",
+                "cancel"
+              ]
+            },
+            "description": "No Authorization header."
+          }
+        },
+        {
+          "name": "20m. Cancel an Unpaid Checkout (Stripe confirms, then CANCELLED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "var res = pm.response.json();",
+                  "pm.test('Cancelled only after Stripe confirmed the session was unpaid', function () {",
+                  "    pm.expect(res.data.outcome).to.eql('cancelled');",
+                  "    pm.expect(res.data.payment.status).to.eql('CANCELLED');",
+                  "});",
+                  "pm.test('Safe summary only', function () {",
+                  "    ['paymentExecuteResponse', 'idempotencyKey', 'initiationFingerprint', 'checkoutUrl', 'payerId'].forEach(function (key) {",
+                  "        pm.expect(res.data.payment).to.not.have.property(key);",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipientAccessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentIdToCancel}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentIdToCancel}}",
+                "cancel"
+              ]
+            },
+            "description": "The payer leaves Checkout. The backend retrieves the session from Stripe: an open session is expired at Stripe and the payment becomes CANCELLED; a session that was actually paid is completed instead and never cancelled; a Stripe outage returns 502 and changes nothing. Settled payments are returned unchanged."
+          }
+        },
+        {
+          "name": "20n. Webhook Without a Valid Signature Is Rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected before any payment state changes (400 bad signature, or 503 if STRIPE_WEBHOOK_SECRET is unset)', function () {",
+                  "    pm.expect([400, 503]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Stripe-Signature",
+                "value": "t=1,v1=invalid",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/stripe/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "stripe",
+                "webhook"
+              ]
+            },
+            "description": "The webhook verifies Stripe-Signature on the raw body before parsing. Real events come only from Stripe (use the Stripe CLI locally).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"evt_postman\",\n  \"type\": \"checkout.session.completed\",\n  \"data\": {\n    \"object\": {\n      \"id\": \"cs_test_fake\",\n      \"payment_status\": \"paid\"\n    }\n  }\n}"
+            }
+          }
         }
       ]
     },
@@ -3386,6 +3623,11 @@
     },
     {
       "key": "checkoutUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paymentIdToCancel",
       "value": "",
       "type": "string"
     }

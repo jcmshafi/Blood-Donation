@@ -11,7 +11,7 @@ var __export = (target, all) => {
 // src/app.ts
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import express from "express";
+import express2 from "express";
 import helmet from "helmet";
 import httpStatus18 from "http-status";
 
@@ -19,7 +19,6 @@ import httpStatus18 from "http-status";
 import dotenv from "dotenv";
 import path from "path";
 dotenv.config({ path: path.join(process.cwd(), ".env") });
-var sandboxDefault = (value) => process.env.NODE_ENV === "production" ? "" : value;
 var config_default = {
   node_env: process.env.NODE_ENV,
   port: process.env.PORT,
@@ -31,14 +30,6 @@ var config_default = {
   jwt_refresh_secret: process.env.JWT_REFRESH_SECRET || "default_jwt_refresh_secret_for_emergency_platform",
   jwt_access_expires_in: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
   jwt_refresh_expires_in: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-  // bKash's published sandbox demo credentials are used only outside production, so a
-  // production deploy that forgets to set BKASH_* answers 503 instead of using the sandbox.
-  bkash_app_key: process.env.BKASH_APP_KEY || sandboxDefault("4f6o0cjiki2rfm34kfdadl1eqq"),
-  bkash_app_secret: process.env.BKASH_APP_SECRET || sandboxDefault("2is7hdktrekvrbljjh44ll3d9l1dtjo4pasmjvs5vl5qr3fug4b"),
-  bkash_username: process.env.BKASH_USERNAME || sandboxDefault("sandboxTokenizedUser02"),
-  bkash_password: process.env.BKASH_PASSWORD || sandboxDefault("sandboxTokenizedUser02@12345"),
-  bkash_base_url: process.env.BKASH_BASE_URL || "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
-  bkash_callback_url: process.env.BKASH_CALLBACK_URL || "http://localhost:5000/api/v1/payments/bkash/callback",
   // Stripe runs in test mode only (sk_test_ keys); initiation answers 503 until a test key is set.
   stripe_secret_key: process.env.STRIPE_SECRET_KEY || "",
   stripe_webhook_secret: process.env.STRIPE_WEBHOOK_SECRET || "",
@@ -1749,23 +1740,23 @@ var donorAssignedEmailHtml = (donorName, patientName, bloodGroup, hospitalName, 
 	</div>
 </div>
 `;
-var paymentReceiptEmailHtml = (payerName, amount, trxID, paymentID) => `
+var paymentReceiptEmailHtml = (payerName, amount, currency, transactionRef, paymentID) => `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
 	<div style="background-color: #e11d48; color: white; padding: 20px; text-align: center;">
-		<h1 style="margin: 0; font-size: 24px;">\u{1F9FE} bKash Payment Receipt</h1>
+		<h1 style="margin: 0; font-size: 24px;">\u{1F9FE} Payment Receipt</h1>
 		<p style="margin: 5px 0 0 0; opacity: 0.9;">Emergency Logistics & Verification Fee</p>
 	</div>
 	<div style="padding: 24px; color: #1e293b;">
 		<p>Dear <strong>${payerName}</strong>,</p>
-		<p>Your payment via bKash has been verified and completed successfully.</p>
+		<p>Your payment has been verified and completed successfully.</p>
 		<table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
 			<tr>
 				<td style="padding: 8px 0; font-weight: bold;">Amount Paid:</td>
-				<td style="padding: 8px 0; font-size: 18px; color: #e11d48; font-weight: bold;">${amount} BDT</td>
+				<td style="padding: 8px 0; font-size: 18px; color: #e11d48; font-weight: bold;">${amount} ${currency}</td>
 			</tr>
 			<tr>
-				<td style="padding: 8px 0; font-weight: bold;">Transaction ID (TrxID):</td>
-				<td style="padding: 8px 0; font-family: monospace; font-size: 14px;">${trxID}</td>
+				<td style="padding: 8px 0; font-weight: bold;">Transaction reference:</td>
+				<td style="padding: 8px 0; font-family: monospace; font-size: 14px;">${transactionRef}</td>
 			</tr>
 			<tr>
 				<td style="padding: 8px 0; font-weight: bold;">Payment ID:</td>
@@ -2870,7 +2861,7 @@ router4.patch(
 var DonationRoutes = router4;
 
 // src/app/module/payment/payment.route.ts
-import { Router as Router5 } from "express";
+import express, { Router as Router5 } from "express";
 
 // src/app/module/payment/payment.controller.ts
 import httpStatus15 from "http-status";
@@ -2914,153 +2905,10 @@ var formatMinor = (minor) => {
   const fraction = String(minor % 100).padStart(2, "0");
   return `${whole}.${fraction}`;
 };
-var parseStoredAmountToMinor = (value) => {
-  if (typeof value !== "string" || !/^\d{1,12}(\.\d{1,2})?$/.test(value))
-    return null;
-  const [whole, fraction = ""] = value.split(".");
-  return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-};
-
-// src/app/module/payment/bkash.client.ts
-var REQUEST_TIMEOUT_MS = 15e3;
-var SUCCESS_CODE = "0000";
-var BkashGatewayError = class extends Error {
-};
-var BkashDeclinedError = class extends BkashGatewayError {
-};
-var isTrustedCheckoutUrl = (value) => {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-    const host = url.hostname.toLowerCase();
-    let configuredHost = "";
-    try {
-      configuredHost = new URL(
-        config_default.bkash_base_url
-      ).hostname.toLowerCase();
-    } catch {
-    }
-    if (configuredHost && host === configuredHost) return true;
-    if (url.protocol !== "https:") return false;
-    return host === "bka.sh" || host.endsWith(".bka.sh") || host === "bkash.com" || host.endsWith(".bkash.com");
-  } catch {
-    return false;
-  }
-};
-var BkashClientService = class {
-  idToken = null;
-  tokenExpiresAt = 0;
-  async post(path3, init) {
-    let response;
-    try {
-      response = await fetch(`${config_default.bkash_base_url}${path3}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...init.headers },
-        body: JSON.stringify(init.body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-    } catch {
-      throw new BkashGatewayError("bKash gateway unreachable");
-    }
-    if (!response.ok)
-      throw new BkashGatewayError(
-        `bKash gateway returned HTTP ${response.status}`
-      );
-    try {
-      return await response.json();
-    } catch {
-      throw new BkashGatewayError("bKash gateway returned a non-JSON response");
-    }
-  }
-  /** Retrieves a valid bKash id_token, reusing the cached one until shortly before expiry. */
-  async getValidToken() {
-    const now = Date.now();
-    if (this.idToken && now < this.tokenExpiresAt - 6e4) return this.idToken;
-    const data = await this.post(
-      "/tokenized/checkout/token/grant",
-      {
-        headers: {
-          username: config_default.bkash_username,
-          password: config_default.bkash_password
-        },
-        body: {
-          app_key: config_default.bkash_app_key,
-          app_secret: config_default.bkash_app_secret
-        }
-      }
-    );
-    if (!data.id_token)
-      throw new BkashGatewayError("bKash token grant was rejected");
-    this.idToken = data.id_token;
-    this.tokenExpiresAt = now + (data.expires_in || 3600) * 1e3;
-    return this.idToken;
-  }
-  async authorizedPost(path3, body) {
-    const token = await this.getValidToken();
-    return this.post(path3, {
-      headers: {
-        Authorization: token,
-        "X-APP-Key": config_default.bkash_app_key
-      },
-      body
-    });
-  }
-  /** Creates a tokenized checkout. `amount` is a two-decimal BDT string such as "150.50". */
-  async createPayment(params) {
-    const data = await this.authorizedPost(
-      "/tokenized/checkout/create",
-      {
-        mode: "0011",
-        payerReference: params.payerReference || "01700000000",
-        callbackURL: config_default.bkash_callback_url,
-        amount: params.amount,
-        currency: "BDT",
-        intent: "sale",
-        merchantInvoiceNumber: params.invoiceNumber
-      }
-    );
-    if (data.statusCode !== SUCCESS_CODE || !data.paymentID || !data.bkashURL) {
-      throw new BkashGatewayError("bKash declined the checkout request");
-    }
-    if (!isTrustedCheckoutUrl(data.bkashURL)) {
-      throw new BkashGatewayError("bKash returned an untrusted checkout URL");
-    }
-    return data;
-  }
-  /** Executes an initiated payment. Throws on any gateway failure; never fabricates success. */
-  async executePayment(paymentID) {
-    const data = await this.authorizedPost(
-      "/tokenized/checkout/execute",
-      {
-        paymentID
-      }
-    );
-    if (data.statusCode !== SUCCESS_CODE) {
-      throw new BkashDeclinedError("bKash did not confirm the payment");
-    }
-    if (!data.trxID) {
-      throw new BkashGatewayError("bKash execute response was incomplete");
-    }
-    return data;
-  }
-  /** Queries payment status from bKash. Throws on any gateway failure. */
-  async queryPayment(paymentID) {
-    const data = await this.authorizedPost(
-      "/tokenized/checkout/payment/status",
-      {
-        paymentID
-      }
-    );
-    if (!data.transactionStatus)
-      throw new BkashGatewayError("bKash status response was incomplete");
-    return data;
-  }
-};
-var BkashClient = new BkashClientService();
 
 // src/app/module/payment/stripe.client.ts
 import Stripe from "stripe";
-var REQUEST_TIMEOUT_MS2 = 15e3;
+var REQUEST_TIMEOUT_MS = 15e3;
 var StripeGatewayError = class extends Error {
   constructor(message, code) {
     super(message);
@@ -3069,8 +2917,9 @@ var StripeGatewayError = class extends Error {
   code;
 };
 var isTestModeKey = (key) => Boolean(key && /^(sk|rk)_test_[A-Za-z0-9]+$/.test(key));
+var isWebhookConfigured = () => /^whsec_[A-Za-z0-9]+$/.test(config_default.stripe_webhook_secret ?? "");
 var isStripeConfigured = () => isTestModeKey(config_default.stripe_secret_key) && Boolean(config_default.stripe_currency) && Boolean(config_default.frontend_url);
-var isTrustedCheckoutUrl2 = (value) => {
+var isTrustedCheckoutUrl = (value) => {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
@@ -3094,16 +2943,51 @@ var clientFor = (secretKey) => {
       host: url.hostname,
       port: url.port || (url.protocol === "https:" ? "443" : "80"),
       protocol: url.protocol.replace(":", ""),
-      timeout: REQUEST_TIMEOUT_MS2,
+      timeout: REQUEST_TIMEOUT_MS,
       maxNetworkRetries: 0
     });
   }
   return new Stripe(secretKey, {
-    timeout: REQUEST_TIMEOUT_MS2,
+    timeout: REQUEST_TIMEOUT_MS,
     maxNetworkRetries: 0
   });
 };
+var apiClient = () => {
+  if (!isTestModeKey(config_default.stripe_secret_key)) {
+    throw new StripeGatewayError("Stripe test-mode key is not configured");
+  }
+  return clientFor(config_default.stripe_secret_key);
+};
+var wrap = async (call) => {
+  try {
+    return await call();
+  } catch (error) {
+    throw new StripeGatewayError(
+      error instanceof Error ? error.message : "Stripe request failed",
+      error.code
+    );
+  }
+};
 var StripeGateway = {
+  /** Verifies the Stripe-Signature header against the raw body. Throws before anything is parsed on a bad signature. */
+  constructWebhookEvent(rawBody, signature) {
+    if (!signature) throw new StripeGatewayError("Missing Stripe-Signature");
+    try {
+      return clientFor(
+        isTestModeKey(config_default.stripe_secret_key) ? config_default.stripe_secret_key : "sk_test_webhook_verification_only"
+      ).webhooks.constructEvent(
+        rawBody,
+        signature,
+        config_default.stripe_webhook_secret
+      );
+    } catch (error) {
+      throw new StripeGatewayError(
+        error instanceof Error ? error.message : "Invalid signature"
+      );
+    }
+  },
+  retrieveCheckoutSession: (sessionId) => wrap(() => apiClient().checkout.sessions.retrieve(sessionId)),
+  expireCheckoutSession: (sessionId) => wrap(() => apiClient().checkout.sessions.expire(sessionId)),
   /** Creates a hosted Checkout Session. Throws StripeGatewayError on any failure; never fabricates a session. */
   async createCheckoutSession(params) {
     if (!isTestModeKey(config_default.stripe_secret_key)) {
@@ -3147,7 +3031,7 @@ var StripeGateway = {
     if (!session.id || !session.url) {
       throw new StripeGatewayError("Stripe returned an incomplete session");
     }
-    if (!isTrustedCheckoutUrl2(session.url)) {
+    if (!isTrustedCheckoutUrl(session.url)) {
       throw new StripeGatewayError("Stripe returned an untrusted checkout URL");
     }
     return { id: session.id, url: session.url };
@@ -3312,7 +3196,7 @@ var OUTCOME_BY_STATUS = {
   [PaymentStatus.FAILED]: "failed",
   [PaymentStatus.PENDING]: "pending"
 };
-var toCallbackResult = (payment) => ({
+var toOutcomeResult = (payment) => ({
   outcome: OUTCOME_BY_STATUS[payment.status],
   payment: {
     ...toPaymentSummary(payment),
@@ -3320,7 +3204,9 @@ var toCallbackResult = (payment) => ({
     failureReason: payment.failureReason
   }
 });
-var matchesStoredPayment = (payment, data) => data.paymentID === payment.paymentId && Boolean(data.trxID) && data.transactionStatus?.toLowerCase() === "completed" && data.currency === payment.currency && parseStoredAmountToMinor(data.amount) === payment.amountMinor;
+var PENDING_PREFIX = "PENDING-";
+var sessionMatchesPayment = (payment, session) => session.payment_status === "paid" && session.amount_total === payment.amountMinor && session.currency?.toUpperCase() === payment.currency && (session.id === payment.paymentId || payment.paymentId.startsWith(PENDING_PREFIX) && session.client_reference_id === payment.id);
+var paymentIntentId = (session) => typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null;
 var settlePending = async (payment, next, ipAddress) => {
   const claimed = await prisma.payment.updateMany({
     where: { id: payment.id, status: PaymentStatus.PENDING },
@@ -3328,11 +3214,12 @@ var settlePending = async (payment, next, ipAddress) => {
       status: next.status,
       ...next.reason ? { failureReason: next.reason } : {},
       ...next.transactionId ? { transactionId: next.transactionId } : {},
-      ...next.executeResponse ? { paymentExecuteResponse: next.executeResponse } : {}
+      ...next.sessionId ? { paymentId: next.sessionId } : {},
+      ...next.gatewayRecord ? { paymentExecuteResponse: next.gatewayRecord } : {}
     }
   });
   const current = await prisma.payment.findUnique({
-    where: { paymentId: payment.paymentId },
+    where: { id: payment.id },
     include: { payer: { select: { id: true, name: true, email: true } } }
   });
   if (!current) {
@@ -3346,7 +3233,7 @@ var settlePending = async (payment, next, ipAddress) => {
       resource: "Payment",
       resourceId: payment.id,
       details: {
-        provider: "BKASH",
+        provider: payment.paymentMethod,
         status: next.status,
         amountMinor: payment.amountMinor,
         currency: payment.currency,
@@ -3359,11 +3246,12 @@ var settlePending = async (payment, next, ipAddress) => {
   if (next.status === PaymentStatus.COMPLETED && current.payer?.email) {
     sendEmail({
       to: current.payer.email,
-      subject: `bKash Payment Receipt: ${formatMinor(current.amountMinor)} BDT (TrxID: ${current.transactionId})`,
+      subject: `Payment Receipt: ${formatMinor(current.amountMinor)} ${current.currency}`,
       html: paymentReceiptEmailHtml(
         current.payer.name,
-        current.amountMinor / 100,
-        current.transactionId || "N/A",
+        formatMinor(current.amountMinor),
+        current.currency,
+        current.transactionId || current.paymentId,
         current.paymentId
       )
     }).catch(
@@ -3372,74 +3260,172 @@ var settlePending = async (payment, next, ipAddress) => {
   }
   return current;
 };
-var handleBkashCallback = async (payload, ipAddress) => {
-  const payment = await prisma.payment.findUnique({
-    where: { paymentId: payload.paymentID }
+var settlePaidSession = (payment, session, ipAddress) => sessionMatchesPayment(payment, session) ? settlePending(
+  payment,
+  {
+    status: PaymentStatus.COMPLETED,
+    action: "PAYMENT_COMPLETED",
+    transactionId: paymentIntentId(session) ?? session.id,
+    sessionId: session.id,
+    gatewayRecord: {
+      sessionId: session.id,
+      paymentIntent: paymentIntentId(session),
+      amountTotal: session.amount_total,
+      currency: session.currency
+    }
+  },
+  ipAddress
+) : settlePending(
+  payment,
+  {
+    status: PaymentStatus.FAILED,
+    action: "PAYMENT_VERIFICATION_FAILED",
+    reason: "Gateway response did not match the payment"
+  },
+  ipAddress
+);
+var findPaymentForSession = async (session) => {
+  const bySession = await prisma.payment.findUnique({
+    where: { paymentId: session.id }
   });
+  if (bySession) return bySession;
+  if (session.client_reference_id) {
+    const byReference = await prisma.payment.findUnique({
+      where: { id: session.client_reference_id }
+    });
+    if (byReference?.paymentId.startsWith(PENDING_PREFIX)) return byReference;
+  }
+  return null;
+};
+var HANDLED_STRIPE_EVENTS = /* @__PURE__ */ new Set([
+  "checkout.session.completed",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+  "checkout.session.expired"
+]);
+var handleStripeEvent = async (event, ipAddress) => {
+  if (!HANDLED_STRIPE_EVENTS.has(event.type)) return { handled: false };
+  const seen = await prisma.paymentWebhookEvent.findUnique({
+    where: { id: event.id }
+  });
+  if (seen) return { handled: true, duplicate: true };
+  const session = event.data.object;
+  const payment = await findPaymentForSession(session);
   if (!payment) {
-    throw new AppError(httpStatus14.NOT_FOUND, "Payment transaction not found");
-  }
-  if (payment.status !== PaymentStatus.PENDING) {
-    return toCallbackResult(payment);
-  }
-  const complete = (data) => matchesStoredPayment(payment, data) ? settlePending(
-    payment,
-    {
-      status: PaymentStatus.COMPLETED,
-      action: "PAYMENT_COMPLETED",
-      transactionId: data.trxID,
-      executeResponse: data
-    },
-    ipAddress
-  ) : settlePending(
-    payment,
-    {
-      status: PaymentStatus.FAILED,
-      action: "PAYMENT_VERIFICATION_FAILED",
-      reason: "Gateway response did not match the payment"
-    },
-    ipAddress
-  );
-  let confirmed = null;
-  if (payload.status === "success") {
-    try {
-      const executed = await BkashClient.executePayment(payload.paymentID);
-      confirmed = await complete(executed);
-    } catch (error) {
-      if (!(error instanceof BkashDeclinedError)) {
-        return toCallbackResult(payment);
+    console.error(
+      "Stripe webhook for an unknown checkout session:",
+      session.id
+    );
+  } else if (payment.status === PaymentStatus.PENDING) {
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      if (session.payment_status === "paid") {
+        await settlePaidSession(payment, session, ipAddress);
       }
-    }
-  }
-  if (!confirmed) {
-    let remote;
-    try {
-      remote = await BkashClient.queryPayment(payload.paymentID);
-    } catch {
-      return toCallbackResult(payment);
-    }
-    const remoteStatus = remote.transactionStatus.toLowerCase();
-    if (remoteStatus === "completed") {
-      confirmed = await complete(remote);
-    } else if (remoteStatus === "cancelled" || remoteStatus === "canceled") {
-      confirmed = await settlePending(
-        payment,
-        { status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
-        ipAddress
-      );
-    } else if (remoteStatus === "failed" || remoteStatus === "expired") {
-      confirmed = await settlePending(
+    } else {
+      await settlePending(
         payment,
         {
           status: PaymentStatus.FAILED,
           action: "PAYMENT_FAILED",
-          reason: "bKash reported the payment as unsuccessful"
+          reason: event.type === "checkout.session.expired" ? "Checkout session expired" : "Payment could not be completed"
         },
         ipAddress
       );
     }
   }
-  return toCallbackResult(confirmed ?? payment);
+  try {
+    await prisma.paymentWebhookEvent.create({
+      data: { id: event.id, type: event.type }
+    });
+  } catch (error) {
+    if (error.code !== RACE_ERROR_CODE) throw error;
+  }
+  return { handled: true, duplicate: false };
+};
+var reconcileStripePayment = async (payment, ipAddress) => {
+  if (payment.paymentMethod !== PaymentMethod.STRIPE || payment.status !== PaymentStatus.PENDING || !payment.paymentId.startsWith("cs_")) {
+    return false;
+  }
+  let session;
+  try {
+    session = await StripeGateway.retrieveCheckoutSession(payment.paymentId);
+  } catch {
+    return false;
+  }
+  if (session.payment_status === "paid") {
+    await settlePaidSession(payment, session, ipAddress);
+    return true;
+  }
+  if (session.status === "expired") {
+    await settlePending(
+      payment,
+      {
+        status: PaymentStatus.FAILED,
+        action: "PAYMENT_FAILED",
+        reason: "Checkout session expired"
+      },
+      ipAddress
+    );
+    return true;
+  }
+  return false;
+};
+var loadAuthorizedPayment = async (paymentIdOrRecordId, userId, userRole) => {
+  const payment = await prisma.payment.findFirst({
+    where: {
+      OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }]
+    }
+  });
+  if (!payment) {
+    throw new AppError(httpStatus14.NOT_FOUND, "Payment record not found");
+  }
+  if (userRole !== Role.ADMIN && payment.payerId !== userId) {
+    throw new AppError(
+      httpStatus14.FORBIDDEN,
+      "You do not have permission to view this payment record"
+    );
+  }
+  return payment;
+};
+var cancelStripePayment = async (paymentIdOrRecordId, userId, userRole, ipAddress) => {
+  const payment = await loadAuthorizedPayment(
+    paymentIdOrRecordId,
+    userId,
+    userRole
+  );
+  if (payment.status !== PaymentStatus.PENDING) return toOutcomeResult(payment);
+  if (payment.paymentMethod !== PaymentMethod.STRIPE || !payment.paymentId.startsWith("cs_")) {
+    return toOutcomeResult(payment);
+  }
+  try {
+    let session = await StripeGateway.retrieveCheckoutSession(
+      payment.paymentId
+    );
+    if (session.payment_status === "paid") {
+      return toOutcomeResult(
+        await settlePaidSession(payment, session, ipAddress)
+      );
+    }
+    if (session.status === "open") {
+      session = await StripeGateway.expireCheckoutSession(payment.paymentId);
+    }
+    if (session.status === "expired" && session.payment_status !== "paid") {
+      return toOutcomeResult(
+        await settlePending(
+          payment,
+          { status: PaymentStatus.CANCELLED, action: "PAYMENT_CANCELLED" },
+          ipAddress
+        )
+      );
+    }
+    return toOutcomeResult(payment);
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(
+      httpStatus14.BAD_GATEWAY,
+      "The payment gateway could not confirm this payment yet. Please try again."
+    );
+  }
 };
 var getMyPayments = async (payerId, filters) => {
   const { page, limit, status, sortBy, sortOrder } = filters;
@@ -3478,8 +3464,8 @@ var getMyPayments = async (payerId, filters) => {
     }))
   };
 };
-var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
-  const payment = await prisma.payment.findFirst({
+var getPaymentById = async (paymentIdOrRecordId, userId, userRole, ipAddress) => {
+  const load = () => prisma.payment.findFirst({
     where: {
       OR: [{ id: paymentIdOrRecordId }, { paymentId: paymentIdOrRecordId }]
     },
@@ -3511,6 +3497,7 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
       }
     }
   });
+  let payment = await load();
   if (!payment) {
     throw new AppError(httpStatus14.NOT_FOUND, "Payment record not found");
   }
@@ -3520,12 +3507,16 @@ var getPaymentById = async (paymentIdOrRecordId, userId, userRole) => {
       "You do not have permission to view this payment record"
     );
   }
+  if (await reconcileStripePayment(payment, ipAddress)) {
+    payment = await load() ?? payment;
+  }
   return payment;
 };
 var PaymentService = {
   getMyPayments,
   initiateStripePayment,
-  handleBkashCallback,
+  handleStripeEvent,
+  cancelStripePayment,
   getPaymentById
 };
 
@@ -3552,15 +3543,8 @@ var idempotencyKeySchema = z10.string().regex(
   /^[A-Za-z0-9_-]{16,64}$/,
   "Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'"
 );
-var bkashCallbackSchema = z10.object({
-  body: z10.object({
-    paymentID: z10.string().min(1, "paymentID is required"),
-    status: z10.string().optional()
-  })
-});
 var PaymentValidation = {
-  createPaymentSchema,
-  bkashCallbackSchema
+  createPaymentSchema
 };
 
 // src/app/module/payment/payment.controller.ts
@@ -3589,21 +3573,6 @@ var initiateStripePayment2 = catchAsync(
     });
   }
 );
-var OUTCOME_PAGE = {
-  completed: "success",
-  cancelled: "cancel",
-  failed: "failure"
-};
-var outcomeRedirect = (page, paymentRecordId) => {
-  if (!config_default.frontend_url) return null;
-  try {
-    const url = new URL(`/payment/${page}`, config_default.frontend_url);
-    if (paymentRecordId) url.searchParams.set("payment", paymentRecordId);
-    return url.toString();
-  } catch {
-    return null;
-  }
-};
 var retiredBkashCreate = (_req, res) => {
   res.status(httpStatus15.GONE).json({
     success: false,
@@ -3611,40 +3580,41 @@ var retiredBkashCreate = (_req, res) => {
     errors: []
   });
 };
-var handleBkashCallback2 = catchAsync(async (req, res) => {
-  const read = (name) => {
-    const value = req.body?.[name] ?? req.query[name];
-    return typeof value === "string" ? value : void 0;
-  };
-  const paymentID = read("paymentID");
-  const hint = read("status");
-  if (!paymentID || paymentID.length > 128) {
-    throw new AppError(httpStatus15.BAD_REQUEST, "A valid paymentID is required");
-  }
-  const redirecting = req.method === "GET";
+var handleStripeWebhook = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  let result;
-  try {
-    result = await PaymentService.handleBkashCallback(
-      { paymentID, status: hint },
-      req.ip
+  if (!isWebhookConfigured()) {
+    throw new AppError(
+      httpStatus15.SERVICE_UNAVAILABLE,
+      "Webhook receiving is not configured"
     );
-  } catch (error) {
-    const target = redirecting && outcomeRedirect("failure");
-    if (target && error instanceof AppError && error.statusCode === 404) {
-      return res.redirect(target);
-    }
-    throw error;
   }
-  if (redirecting) {
-    const page = result.outcome === "pending" ? hint === "cancel" ? "cancel" : hint === "failure" ? "failure" : "success" : OUTCOME_PAGE[result.outcome];
-    const target = outcomeRedirect(page, result.payment.id);
-    if (target) return res.redirect(target);
+  if (!Buffer.isBuffer(req.body)) {
+    throw new AppError(httpStatus15.BAD_REQUEST, "Invalid webhook payload");
   }
+  let event;
+  try {
+    event = StripeGateway.constructWebhookEvent(
+      req.body,
+      req.get("stripe-signature")
+    );
+  } catch {
+    throw new AppError(httpStatus15.BAD_REQUEST, "Invalid webhook signature");
+  }
+  await PaymentService.handleStripeEvent(event, req.ip);
+  res.status(httpStatus15.OK).json({ received: true });
+});
+var cancelStripePayment2 = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const result = await PaymentService.cancelStripePayment(
+    req.params.id,
+    req.user.userId,
+    req.user.role,
+    req.ip
+  );
   sendResponse(res, {
     statusCode: httpStatus15.OK,
     success: true,
-    message: `bKash payment ${result.outcome}`,
+    message: `Payment ${result.outcome}`,
     data: result
   });
 });
@@ -3663,7 +3633,12 @@ var getPaymentById2 = catchAsync(async (req, res) => {
   const id = req.params.id;
   const userId = req.user.userId;
   const userRole = req.user.role;
-  const result = await PaymentService.getPaymentById(id, userId, userRole);
+  const result = await PaymentService.getPaymentById(
+    id,
+    userId,
+    userRole,
+    req.ip
+  );
   sendResponse(res, {
     statusCode: httpStatus15.OK,
     success: true,
@@ -3675,11 +3650,16 @@ var PaymentController = {
   retiredBkashCreate,
   getMyPayments: getMyPayments2,
   initiateStripePayment: initiateStripePayment2,
-  handleBkashCallback: handleBkashCallback2,
+  handleStripeWebhook,
+  cancelStripePayment: cancelStripePayment2,
   getPaymentById: getPaymentById2
 };
 
 // src/app/module/payment/payment.route.ts
+var stripeWebhookBodyParser = express.raw({
+  type: "application/json",
+  limit: "1mb"
+});
 var router5 = Router5();
 router5.post(
   "/stripe/checkout",
@@ -3688,13 +3668,13 @@ router5.post(
   PaymentController.initiateStripePayment
 );
 router5.post("/bkash/create", PaymentController.retiredBkashCreate);
-router5.post("/bkash/callback", PaymentController.handleBkashCallback);
-router5.get("/bkash/callback", PaymentController.handleBkashCallback);
+router5.post("/stripe/webhook", PaymentController.handleStripeWebhook);
 router5.get(
   "/mine",
   auth(Role.RECIPIENT, Role.ADMIN),
   PaymentController.getMyPayments
 );
+router5.post("/:id/cancel", auth(), PaymentController.cancelStripePayment);
 router5.get("/:id", auth(), PaymentController.getPaymentById);
 var PaymentRoutes = router5;
 
@@ -3873,7 +3853,7 @@ router6.patch(
 var UserRoutes = router6;
 
 // src/app.ts
-var app = express();
+var app = express2();
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -3886,8 +3866,9 @@ app.use(
     credentials: true
   })
 );
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express2.urlencoded({ extended: true }));
+app.use("/api/v1/payments/stripe/webhook", stripeWebhookBodyParser);
+app.use(express2.json());
 app.use(cookieParser());
 app.use("/api/v1/auth", AuthRoutes);
 app.use("/api/v1/users", UserRoutes);

@@ -6,10 +6,10 @@
 [![Prisma ORM](https://img.shields.io/badge/Prisma-7.x-2D3748?logo=prisma&style=flat-square)](https://www.prisma.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql&style=flat-square)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-Cache-DC382D?logo=redis&style=flat-square)](https://redis.io/)
-[![bKash Gateway](https://img.shields.io/badge/Payment-bKash_Tokenized-E2136E?style=flat-square)](https://developer.bka.sh/)
+[![Stripe](https://img.shields.io/badge/Payment-Stripe_Checkout_(test_mode)-635BFF?style=flat-square)](https://stripe.com/docs/payments/checkout)
 [![License](https://img.shields.io/badge/License-ISC-green?style=flat-square)](LICENSE)
 
-A mission-critical, enterprise-ready RESTful backend connecting blood donors with recipients during medical emergencies. Features intelligent **geospatial proximity matching**, strict **ABO blood compatibility logic**, **pessimistic concurrency locking** to eliminate duplicate-acceptance race conditions, an automated **90-day donor cooldown engine**, integrated **bKash Tokenized Checkout** for emergency transport logistics funds, and administrative moderation with immutable audit trails.
+A mission-critical, enterprise-ready RESTful backend connecting blood donors with recipients during medical emergencies. Features intelligent **geospatial proximity matching**, strict **ABO blood compatibility logic**, **pessimistic concurrency locking** to eliminate duplicate-acceptance race conditions, an automated **90-day donor cooldown engine**, integrated **Stripe Checkout (test mode)** for emergency transport logistics funds, and administrative moderation with immutable audit trails.
 
 ---
 
@@ -46,15 +46,15 @@ A mission-critical, enterprise-ready RESTful backend connecting blood donors wit
 - **Pessimistic Concurrency Lock:** Wraps acceptance logic in PostgreSQL serializable transactions (`prisma.$transaction`) to prevent two donors from simultaneously claiming the same emergency request (`409 Conflict` on race conditions).
 - **Automated 90-Day Cooldown Engine:** Transitioning a donation to `COMPLETED` atomically updates the donor's `lastDonationDate`, flips `isAvailable` to `false`, sets `nextEligibleDate` to `+90 days`, and tracks remaining days until next eligibility.
 
-### 5. 💳 Tokenized bKash Payment Gateway Integration (Phase 5)
-- **Emergency Transport Logistics Fund:** Recipient can sponsor ambulance or emergency blood transport fees via bKash.
-- **bKash Tokenized Checkout:** Initiates checkout via official bKash APIs, generates merchant invoices, and returns secure gateway redirect URLs.
-- **Callback Verification & Webhook:** Securely handles bKash redirects (`/checkout/execute`), captures immutable `trxID` and gateway response, marks payment `COMPLETED`, and writes an audit log.
+### 5. 💳 Stripe Checkout Payments, Test Mode (Phase 5)
+- **Emergency Transport Logistics Fund:** Recipient can sponsor ambulance or emergency blood transport fees through Stripe Checkout (test mode only; live keys are refused).
+- **Idempotent Checkout:** `POST /api/v1/payments/stripe/checkout` stores the attempt first, takes an `Idempotency-Key`, and returns a hosted Stripe Checkout URL.
+- **Verified Completion:** a signature-verified Stripe webhook (plus a server-side re-check when a pending payment is read) completes a payment once, only when session, amount and currency match, and writes an audit log. See `PAYMENT_STRIPE_CHECKOUT.md` and `PAYMENT_STRIPE_WEBHOOK.md`. Earlier bKash payments stay readable.
 
 ### 6. 🛡️ Admin Moderation, Audit Trails & Real-Time Dashboard (Phase 6)
 - **User Management Directory:** Admin search and status filters across all registered platform users.
 - **Account Suspension & Restoration:** Admin ability to toggle status (`ACTIVE` $\leftrightarrow$ `BLOCKED`) with mandatory audit logging and immediate session revocation.
-- **Platform Analytics Dashboard:** Real-time metrics including total users by role, donor availability versus cooldown ratios, blood requests grouped by status and urgency, and cumulative bKash transport funds collected.
+- **Platform Analytics Dashboard:** Real-time metrics including total users by role, donor availability versus cooldown ratios, blood requests grouped by status and urgency, and cumulative transport funds collected.
 - **Immutable System Audit Logs:** Chronological record of administrative moderation events, security violations, and payment executions.
 
 ### 7. 🚀 Security, Hardening & Serverless Performance (Phase 7)
@@ -76,7 +76,7 @@ A mission-critical, enterprise-ready RESTful backend connecting blood donors wit
 | **Language** | [TypeScript](https://www.typescriptlang.org/) (7.x) | Strict type safety and compilation |
 | **ORM & Database** | [Prisma 7](https://www.prisma.io/) & [PostgreSQL](https://www.postgresql.org/) | Type-safe schema migrations and relational storage |
 | **Caching** | [IORedis](https://github.com/redis/ioredis) | In-memory key-value cache with internal memory fallback |
-| **Payments** | [bKash Tokenized Checkout](https://developer.bka.sh/) | Official Bangladeshi mobile financial services API |
+| **Payments** | [Stripe Checkout](https://stripe.com/docs/payments/checkout) | Hosted payment page, test mode, signed webhooks |
 | **Social Auth** | [Google Auth Library](https://github.com/googleapis/google-auth-library-nodejs) | Cryptographic verification of Google OAuth2 ID tokens |
 | **Security** | [Helmet](https://helmetjs.github.io/), [bcryptjs](https://github.com/dcodeIO/bcrypt.js), [Zod](https://zod.dev/) | HTTP headers hardening, password hashing, and input validation |
 | **Bundling** | [TSUP](https://tsup.egoist.dev/) (esbuild) | Zero-config TypeScript bundler generating production artifacts |
@@ -122,13 +122,10 @@ JWT_REFRESH_EXPIRES_IN="7d"
 # Google Social Login
 GOOGLE_CLIENT_ID="your-google-oauth-client-id.apps.googleusercontent.com"
 
-# bKash Sandbox Payment Gateway Credentials
-BKASH_APP_KEY="your_bkash_app_key"
-BKASH_APP_SECRET="your_bkash_app_secret"
-BKASH_USERNAME="your_bkash_username"
-BKASH_PASSWORD="your_bkash_password"
-BKASH_BASE_URL="https://tokenized.sandbox.bka.sh/v1.2.0-beta"
-BKASH_CALLBACK_URL="http://localhost:5000/api/v1/payments/bkash/callback"
+# Stripe (test mode only; live keys are refused)
+STRIPE_SECRET_KEY="sk_test_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+STRIPE_CURRENCY="bdt"
 
 # Email Notifications (Optional - Nodemailer SMTP)
 SMTP_HOST="smtp.gmail.com"
@@ -209,7 +206,7 @@ Generates production-bundled standalone files in the `dist/` folder:
 ### Deploying to Vercel
 1. Push your repository to GitHub.
 2. In the Vercel dashboard, click **Add New Project** and select `Blood-Donation`.
-3. In **Settings -> Environment Variables**, add your production database URL and secrets (`DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `BKASH_*`, etc.).
+3. In **Settings -> Environment Variables**, add your production database URL and secrets (`DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `STRIPE_*`, etc.).
 4. Deploy! Vercel uses `vercel.json` and runs `tsup` via `@vercel/node`.
 
 ---
@@ -249,11 +246,12 @@ Generates production-bundled standalone files in the `dist/` folder:
 | `PATCH` | `/api/v1/donations/:id/status` | Donor / Recipient / Admin | Mark `COMPLETED` and trigger 90-day cooldown |
 | `GET` | `/api/v1/donations/my-history` | `DONOR` | View personal donation history & cooldown stats |
 
-### 💳 bKash Logistics Payments (`/api/v1/payments`)
+### 💳 Stripe Logistics Payments (`/api/v1/payments`)
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
 | `POST` | `/api/v1/payments/stripe/checkout` | `RECIPIENT`, `ADMIN` | Start a Stripe Checkout (test mode); `Idempotency-Key` header required, see PAYMENT_STRIPE_CHECKOUT.md |
-| `POST` | `/api/v1/payments/bkash/callback` | Public / Gateway | Handle bKash checkout webhook & execute |
+| `POST` | `/api/v1/payments/stripe/webhook` | Stripe (signature) | Verified completion webhook; see PAYMENT_STRIPE_WEBHOOK.md |
+| `POST` | `/api/v1/payments/:id/cancel` | Payer / `ADMIN` | Cancel an unpaid Stripe checkout (confirmed with Stripe) |
 | `GET` | `/api/v1/payments/mine` | `RECIPIENT`, `ADMIN` | Own payment history (paginated; see PAYMENT_HISTORY_API.md) |
 | `GET` | `/api/v1/payments/:id` | Payer / `ADMIN` | Retrieve payment transaction receipt |
 
@@ -309,7 +307,7 @@ The complete test suite is available in [`postman/blood-donation-platform.postma
 │       │   ├── auth/          # Register, login, google-login, refresh-token
 │       │   ├── bloodRequest/  # Request CRUD, search, filtering
 │       │   ├── donation/      # Matching, acceptance lock, 90-day cooldown
-│       │   ├── payment/       # bKash client, checkout create & execute
+│       │   ├── payment/       # Stripe client, checkout, webhook, history
 │       │   └── user/          # User & donor profile management
 │       └── utils/             # Haversine distance, email service, response helpers
 ├── tsup.config.ts             # TSUP esbuild bundler configuration

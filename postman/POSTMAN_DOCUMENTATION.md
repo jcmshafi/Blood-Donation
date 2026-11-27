@@ -296,7 +296,7 @@ bKash checkout was retired because its sandbox rejects every callback URL; old b
 }
 ```
 - **Other outcomes:** `200` replay of the same key (same attempt and URL, no second Stripe call); `422` key reused with a different request or amount; `400` missing/invalid key, amount or body, or an amount below Stripe's minimum; `404` unknown request; `502` Stripe could not create the Checkout (attempt stored as `FAILED`; retry with a new key); `503` key or `FRONTEND_URL` not configured. Requests 18b to 18i cover these.
-- **Paying:** open `{{checkoutUrl}}` in a browser and use test card `4242 4242 4242 4242` with any future expiry and any CVC (declined: `4000 0000 0000 9995`, 3-D Secure: `4000 0025 0000 3155`). Stripe returns the browser to `FRONTEND_URL/payment/success?payment=<id>` or `.../payment/cancel?payment=<id>` (record ID only). A payment becomes `COMPLETED` only through the verified Stripe webhook (next backend step), so until then it stays `PENDING`.
+- **Paying:** open `{{checkoutUrl}}` in a browser and use test card `4242 4242 4242 4242` with any future expiry and any CVC (declined: `4000 0000 0000 9995`, 3-D Secure: `4000 0025 0000 3155`). Stripe returns the browser to `FRONTEND_URL/payment/success?payment=<id>` or `.../payment/cancel?payment=<id>` (record ID only). A payment becomes `COMPLETED` only through the signature-verified Stripe webhook, or when reading a `PENDING` payment re-checks it with Stripe (see below).
 
 #### 2. Get Payment Details
 - **Method:** `GET`
@@ -311,7 +311,20 @@ bKash checkout was retired because its sandbox rejects every callback URL; old b
 - **Query (strict):** `page`, `limit` (1-50, default 10), `status` (`PENDING|COMPLETED|FAILED|CANCELLED`), `sortBy` (`createdAt|amountMinor|status`), `sortOrder`. Unknown keys such as `payerId` return `400`.
 - **Response:** `{ meta: { page, limit, total, totalPages }, result: [ { id, requestId, status, paymentMethod, currency, amount, paymentId, createdAt, transactionId, failureReason, request: { id, bloodGroup, hospitalName } } ] }`
 
-#### 4. Retired bKash Checkout
+#### 4. Stripe Webhook (verified completion)
+- **Method:** `POST`
+- **URL:** `{{baseUrl}}/api/v1/payments/stripe/webhook`
+- **Access:** public, but every call must carry a valid `Stripe-Signature` (checked on the raw body with `STRIPE_WEBHOOK_SECRET`; bad or missing signatures return `400`, an unset secret `503`). It cannot be sent from Postman; locally run `stripe listen --forward-to localhost:5000/api/v1/payments/stripe/webhook` and use its `whsec_...` value.
+- **Behavior:** `checkout.session.completed` / `async_payment_succeeded` complete a payment only when the session is paid and its session ID, amount and currency match the stored `PENDING` attempt (one audit entry, one receipt). `checkout.session.expired` and `async_payment_failed` mark it `FAILED`. Processed event IDs are recorded, so replays do nothing; a settled payment is never changed.
+- **Reconcile on read:** `GET /payments/:id` of a `PENDING` Stripe payment asks Stripe for the session and settles it through the same checks, so a missed webhook does not strand a paid payment.
+
+#### 5. Cancel a Checkout
+- **Method:** `POST`
+- **URL:** `{{baseUrl}}/api/v1/payments/:id/cancel`
+- **Access:** the payer or `ADMIN`
+- **Behavior:** the backend retrieves the session from Stripe: open sessions are expired at Stripe and the payment becomes `CANCELLED`; a paid session is completed instead; a Stripe outage returns `502` and changes nothing; settled payments are returned unchanged. Response: `{ outcome, payment }`. Requests 20j to 20m cover it; run them last.
+
+#### 6. Retired bKash Checkout
 - **Method:** `POST` `{{baseUrl}}/api/v1/payments/bkash/create` answers `410 Gone` with a pointer to the Stripe endpoint (request 18i).
 
 ---

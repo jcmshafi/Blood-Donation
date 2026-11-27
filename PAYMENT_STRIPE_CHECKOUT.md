@@ -1,10 +1,10 @@
 # Stripe Checkout initiation, test mode (7-BE1)
 
-Replaces the bKash checkout (its sandbox rejects every callback URL). The webhook that completes payments arrives in 7-BE2; until then a created Checkout stays `PENDING`.
+Replaces the bKash checkout (its sandbox rejects every callback URL). Payments are completed by the Stripe webhook (see `PAYMENT_STRIPE_WEBHOOK.md`).
 
 ## Setup
 1. Create a free Stripe account and copy the **test-mode** secret key (`sk_test_...`) from the Dashboard.
-2. Set in `server/.env`: `STRIPE_SECRET_KEY`, `FRONTEND_URL` (used for the return pages), optional `STRIPE_CURRENCY` (default `bdt`). `STRIPE_WEBHOOK_SECRET` is used from 7-BE2.
+2. Set in `server/.env`: `STRIPE_SECRET_KEY`, `FRONTEND_URL` (used for the return pages), optional `STRIPE_CURRENCY` (default `bdt`). `STRIPE_WEBHOOK_SECRET` is needed for the webhook (see `PAYMENT_STRIPE_WEBHOOK.md`).
 3. Live keys (`sk_live_`, `rk_live_`) are refused: initiation answers 503. Missing key or `FRONTEND_URL` also answers 503 and stores nothing.
 
 If Stripe rejects BDT for your account, set `STRIPE_CURRENCY` to a supported currency (for example `usd`) and note it in the docs. A too-small amount returns 400 with a "below the minimum" message.

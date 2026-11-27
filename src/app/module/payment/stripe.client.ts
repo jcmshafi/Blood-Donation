@@ -17,6 +17,9 @@ export class StripeGatewayError extends Error {
 export const isTestModeKey = (key: string | undefined): key is string =>
 	Boolean(key && /^(sk|rk)_test_[A-Za-z0-9]+$/.test(key));
 
+export const isWebhookConfigured = (): boolean =>
+	/^whsec_[A-Za-z0-9]+$/.test(config.stripe_webhook_secret ?? "");
+
 export const isStripeConfigured = (): boolean =>
 	isTestModeKey(config.stripe_secret_key) &&
 	Boolean(config.stripe_currency) &&
@@ -59,6 +62,24 @@ const clientFor = (secretKey: string) => {
 	});
 };
 
+const apiClient = () => {
+	if (!isTestModeKey(config.stripe_secret_key)) {
+		throw new StripeGatewayError("Stripe test-mode key is not configured");
+	}
+	return clientFor(config.stripe_secret_key);
+};
+
+const wrap = async <T>(call: () => Promise<T>): Promise<T> => {
+	try {
+		return await call();
+	} catch (error) {
+		throw new StripeGatewayError(
+			error instanceof Error ? error.message : "Stripe request failed",
+			(error as { code?: string }).code,
+		);
+	}
+};
+
 export type CheckoutSessionParams = {
 	paymentRecordId: string;
 	requestId: string;
@@ -70,6 +91,32 @@ export type CheckoutSessionParams = {
 };
 
 export const StripeGateway = {
+	/** Verifies the Stripe-Signature header against the raw body. Throws before anything is parsed on a bad signature. */
+	constructWebhookEvent(rawBody: Buffer, signature: string | undefined) {
+		if (!signature) throw new StripeGatewayError("Missing Stripe-Signature");
+		try {
+			return clientFor(
+				isTestModeKey(config.stripe_secret_key)
+					? config.stripe_secret_key
+					: "sk_test_webhook_verification_only",
+			).webhooks.constructEvent(
+				rawBody,
+				signature,
+				config.stripe_webhook_secret,
+			);
+		} catch (error) {
+			throw new StripeGatewayError(
+				error instanceof Error ? error.message : "Invalid signature",
+			);
+		}
+	},
+
+	retrieveCheckoutSession: (sessionId: string) =>
+		wrap(() => apiClient().checkout.sessions.retrieve(sessionId)),
+
+	expireCheckoutSession: (sessionId: string) =>
+		wrap(() => apiClient().checkout.sessions.expire(sessionId)),
+
 	/** Creates a hosted Checkout Session. Throws StripeGatewayError on any failure; never fabricates a session. */
 	async createCheckoutSession(params: CheckoutSessionParams) {
 		if (!isTestModeKey(config.stripe_secret_key)) {

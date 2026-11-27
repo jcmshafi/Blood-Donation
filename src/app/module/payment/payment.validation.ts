@@ -38,14 +38,6 @@ export const idempotencyKeySchema = z
 		"Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'",
 	);
 
-const bkashCallbackSchema = z.object({
-	body: z.object({
-		paymentID: z.string().min(1, "paymentID is required"),
-		status: z.string().optional(),
-	}),
-});
-
 export const PaymentValidation = {
 	createPaymentSchema,
-	bkashCallbackSchema,
 };

@@ -1,11 +1,11 @@
 import type { Request, Response } from "express";
 import httpStatus from "http-status";
-import config from "../../config/index";
 import { AppError } from "../../utils/AppError";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
 import { myPaymentsQuerySchema } from "./payment.query";
 import { PaymentService } from "./payment.service";
+import { isWebhookConfigured, StripeGateway } from "./stripe.client";
 import { idempotencyKeySchema } from "./payment.validation";
 
 const initiateStripePayment = catchAsync(
@@ -37,24 +37,6 @@ const initiateStripePayment = catchAsync(
 	},
 );
 
-const OUTCOME_PAGE = {
-	completed: "success",
-	cancelled: "cancel",
-	failed: "failure",
-} as const;
-
-/** Server-built redirect: only a payment record reference travels in the URL, never a status. */
-const outcomeRedirect = (page: string, paymentRecordId?: string) => {
-	if (!config.frontend_url) return null;
-	try {
-		const url = new URL(`/payment/${page}`, config.frontend_url);
-		if (paymentRecordId) url.searchParams.set("payment", paymentRecordId);
-		return url.toString();
-	} catch {
-		return null;
-	}
-};
-
 /** bKash checkout was retired: its sandbox rejects every callback URL. Existing bKash records stay readable. */
 const retiredBkashCreate = (_req: Request, res: Response) => {
 	res.status(httpStatus.GONE).json({
@@ -65,53 +47,46 @@ const retiredBkashCreate = (_req: Request, res: Response) => {
 	});
 };
 
-const handleBkashCallback = catchAsync(async (req: Request, res: Response) => {
-	const read = (name: string) => {
-		const value = req.body?.[name] ?? req.query[name];
-		return typeof value === "string" ? value : undefined;
-	};
-	const paymentID = read("paymentID");
-	const hint = read("status");
-
-	if (!paymentID || paymentID.length > 128) {
-		throw new AppError(httpStatus.BAD_REQUEST, "A valid paymentID is required");
-	}
-
-	// Browsers return via GET and are redirected; API callers (POST) get JSON.
-	const redirecting = req.method === "GET";
+/**
+ * Stripe webhook. The body is the raw bytes (see stripeWebhookBodyParser) so the signature can
+ * be verified before anything is parsed. Bad signatures never reach the payment logic.
+ */
+const handleStripeWebhook = catchAsync(async (req: Request, res: Response) => {
 	res.setHeader("Cache-Control", "no-store");
-
-	let result: Awaited<ReturnType<typeof PaymentService.handleBkashCallback>>;
-	try {
-		result = await PaymentService.handleBkashCallback(
-			{ paymentID, status: hint },
-			req.ip,
+	if (!isWebhookConfigured()) {
+		throw new AppError(
+			httpStatus.SERVICE_UNAVAILABLE,
+			"Webhook receiving is not configured",
 		);
-	} catch (error) {
-		const target = redirecting && outcomeRedirect("failure");
-		if (target && error instanceof AppError && error.statusCode === 404) {
-			return res.redirect(target);
-		}
-		throw error;
 	}
-
-	if (redirecting) {
-		const page =
-			result.outcome === "pending"
-				? hint === "cancel"
-					? "cancel"
-					: hint === "failure"
-						? "failure"
-						: "success"
-				: OUTCOME_PAGE[result.outcome];
-		const target = outcomeRedirect(page, result.payment.id);
-		if (target) return res.redirect(target);
+	if (!Buffer.isBuffer(req.body)) {
+		throw new AppError(httpStatus.BAD_REQUEST, "Invalid webhook payload");
 	}
+	let event: ReturnType<typeof StripeGateway.constructWebhookEvent>;
+	try {
+		event = StripeGateway.constructWebhookEvent(
+			req.body,
+			req.get("stripe-signature"),
+		);
+	} catch {
+		throw new AppError(httpStatus.BAD_REQUEST, "Invalid webhook signature");
+	}
+	await PaymentService.handleStripeEvent(event, req.ip);
+	res.status(httpStatus.OK).json({ received: true });
+});
 
+const cancelStripePayment = catchAsync(async (req: Request, res: Response) => {
+	res.setHeader("Cache-Control", "private, no-store");
+	const result = await PaymentService.cancelStripePayment(
+		req.params.id as string,
+		req.user!.userId,
+		req.user!.role,
+		req.ip,
+	);
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
 		success: true,
-		message: `bKash payment ${result.outcome}`,
+		message: `Payment ${result.outcome}`,
 		data: result,
 	});
 });
@@ -135,7 +110,12 @@ const getPaymentById = catchAsync(async (req: Request, res: Response) => {
 	const userId = req.user!.userId;
 	const userRole = req.user!.role;
 
-	const result = await PaymentService.getPaymentById(id, userId, userRole);
+	const result = await PaymentService.getPaymentById(
+		id,
+		userId,
+		userRole,
+		req.ip,
+	);
 
 	sendResponse(res, {
 		statusCode: httpStatus.OK,
@@ -149,6 +129,7 @@ export const PaymentController = {
 	retiredBkashCreate,
 	getMyPayments,
 	initiateStripePayment,
-	handleBkashCallback,
+	handleStripeWebhook,
+	cancelStripePayment,
 	getPaymentById,
 };
